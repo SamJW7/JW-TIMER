@@ -1,0 +1,97 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web bundle to dist/
+        run: npm run build
+
+      - name: Add Capacitor Android platform
+        run: |
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+
+      - name: Copy native Kotlin Overlay files & AndroidManifest.xml
+        run: |
+          mkdir -p android/app/src/main/java/com/midweek/meetingtimer
+          cp android-template/MainActivity.kt android/app/src/main/java/com/midweek/meetingtimer/MainActivity.kt
+          cp android-template/OverlayPlugin.kt android/app/src/main/java/com/midweek/meetingtimer/OverlayPlugin.kt
+          cp android-template/OverlayService.kt android/app/src/main/java/com/midweek/meetingtimer/OverlayService.kt
+          cp android-template/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          rm -f android/app/src/main/java/com/midweek/meetingtimer/MainActivity.java
+
+      - name: Enable Kotlin support in Android Gradle
+        run: |
+          node -e '
+            const fs = require("fs");
+
+            // 1. Add kotlin-gradle-plugin to android/build.gradle
+            let rootGradle = fs.readFileSync("android/build.gradle", "utf8");
+            if (!rootGradle.includes("kotlin-gradle-plugin")) {
+              rootGradle = rootGradle.replace(
+                /dependencies\s*\{/,
+                "dependencies {\n        classpath \"org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.10\""
+              );
+              fs.writeFileSync("android/build.gradle", rootGradle);
+            }
+
+            // 2. Apply kotlin-android plugin and JVM target in android/app/build.gradle
+            let appGradle = fs.readFileSync("android/app/build.gradle", "utf8");
+            if (!appGradle.includes("kotlin-android")) {
+              appGradle = appGradle.replace(
+                "apply plugin: '\''com.android.application'\''",
+                "apply plugin: '\''com.android.application'\''\napply plugin: '\''kotlin-android'\''"
+              );
+            }
+            if (!appGradle.includes("kotlinOptions")) {
+              appGradle = appGradle.replace(
+                "buildTypes {",
+                "compileOptions {\n        sourceCompatibility JavaVersion.VERSION_17\n        targetCompatibility JavaVersion.VERSION_17\n    }\n    kotlinOptions {\n        jvmTarget = '\''17'\''\n    }\n    buildTypes {"
+              );
+            }
+            fs.writeFileSync("android/app/build.gradle", appGradle);
+          '
+
+      - name: Sync Capacitor Android project
+        run: npx cap sync android
+
+      - name: Build Debug APK with Gradle
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload app-debug.apk artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Midweek-Timer-Debug-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

@@ -1,0 +1,505 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Midweek Timer</title>
+    <meta name="description" content="Offline Midweek Meeting Timer with S-140/KHS schedule OCR scanner, vibration alerts, plain-text overtime reporting, and native Android floating overlay." />
+    <meta property="og:title" content="Midweek Timer" />
+    <meta property="og:description" content="Offline Midweek Meeting Timer with S-140/KHS schedule OCR scanner, vibration alerts, plain-text overtime reporting, and native Android floating overlay." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="stylesheet" href="/src/styles/tokens.css" />
+    <link rel="stylesheet" href="/src/styles/layout.css" />
+    <link rel="stylesheet" href="/src/styles/components.css" />
+  </head>
+  <body class="theme-midnight">
+    <!-- Browser Picture-in-Picture Fallback Elements -->
+    <canvas id="pip-canvas" width="480" height="240" class="hidden"></canvas>
+    <video id="pip-video" muted playsinline autoplay class="hidden"></video>
+
+    <!-- Compact Sticky Top App Bar -->
+    <header class="app-header">
+      <div class="header-inner">
+        <div class="brand-lockup">
+          <div class="brand-mark">MT</div>
+          <span class="brand-title" id="header-app-title">Midweek Timer</span>
+        </div>
+
+        <span class="header-week-meta" id="header-week-meta"></span>
+
+        <div class="header-actions">
+          <button type="button" class="btn btn-compact btn-ghost" id="btn-header-summary">
+            <span id="txt-header-summary">Summary</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main 3-Tab Content -->
+    <main class="app-main">
+      <!-- TAB 1: TIMER -->
+      <section id="tab-timer" class="tab-panel active" aria-labelledby="nav-label-timer">
+        <div class="timer-workspace">
+          <!-- Primary Countdown Stage -->
+          <div class="surface-card">
+            <div class="timer-meta-top">
+              <span class="section-badge treasures" id="timer-section-badge">Treasures</span>
+              <span class="status-badge ontime" id="timer-status-badge">On Time</span>
+            </div>
+
+            <h1 class="timer-part-title" id="timer-part-title">Opening Comments</h1>
+            <p class="timer-speaker-line" id="timer-speaker-line">Unassigned</p>
+
+            <div class="timer-display-well" id="timer-display-well">
+              <div class="timer-digits mono-tabular" id="timer-digits">01:00</div>
+              <div class="timer-sub-metrics">
+                <span id="timer-allotted-label">Allotted: 01:00</span>
+                <span aria-hidden="true">·</span>
+                <span id="timer-elapsed-label">Elapsed: 00:00</span>
+                <span aria-hidden="true">·</span>
+                <span id="timer-part-counter">Part 1 of 10</span>
+              </div>
+            </div>
+
+            <div class="progress-rail">
+              <div class="progress-bar" id="timer-progress-bar"></div>
+            </div>
+
+            <div class="timer-primary-controls">
+              <button type="button" class="btn btn-lg btn-primary" id="btn-start-pause">
+                <span id="txt-start-pause">Start</span>
+              </button>
+              <button type="button" class="btn btn-lg btn-success" id="btn-next-part">
+                <span id="txt-next-part">Next Part</span>
+              </button>
+            </div>
+
+            <div class="timer-secondary-controls">
+              <button type="button" class="btn btn-secondary" id="btn-prev-part">
+                <span id="txt-prev-part">Previous</span>
+              </button>
+              <button type="button" class="btn btn-secondary" id="btn-reset-part">
+                <span id="txt-reset-part">Reset</span>
+              </button>
+              <button type="button" class="btn btn-secondary" id="btn-float-overlay">
+                <span id="txt-float-overlay">Float Overlay</span>
+              </button>
+            </div>
+
+            <div class="timer-quick-adjust">
+              <span class="section-subtitle" id="txt-quick-adjust-label">Target Adjust</span>
+              <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                <button type="button" class="btn btn-compact btn-ghost" id="btn-min-minus">-1m</button>
+                <button type="button" class="btn btn-compact btn-ghost" id="btn-min-plus">+1m</button>
+                <button type="button" class="btn btn-compact btn-ghost" id="btn-open-summary-inline">
+                  <span id="txt-view-summary">Overtime Report</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Active Week Parts Queue -->
+          <div class="surface-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+              <div>
+                <h2 class="section-heading" id="txt-queue-heading">Meeting Parts</h2>
+                <p class="section-subtitle" id="txt-queue-week-label"></p>
+              </div>
+              <button type="button" class="btn btn-compact btn-ghost" id="btn-reset-week-times">
+                <span id="txt-reset-week-times">Reset Week Times</span>
+              </button>
+            </div>
+            <div class="parts-queue-list" id="timer-parts-queue"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: SCHEDULES (WEEKS) -->
+      <section id="tab-schedules" class="tab-panel" aria-labelledby="nav-label-schedules">
+        <div class="section-header-row">
+          <div>
+            <h2 class="section-heading" id="txt-schedules-heading">Weekly Schedules</h2>
+            <p class="section-subtitle" id="txt-schedules-sub">Scan S-140 / KHS images offline, paste text, or edit weeks manually.</p>
+          </div>
+        </div>
+
+        <div class="schedules-toolbar">
+          <input type="file" id="ocr-image-input" accept="image/*" class="hidden" />
+          <button type="button" class="btn btn-primary" id="btn-upload-ocr">
+            <span id="txt-upload-ocr">Upload Schedule Image</span>
+          </button>
+          <button type="button" class="btn btn-secondary" id="btn-open-text-autofill">
+            <span id="txt-open-text-autofill">Paste Schedule Text</span>
+          </button>
+          <button type="button" class="btn btn-secondary" id="btn-new-blank-week">
+            <span id="txt-new-blank-week">New Blank Week</span>
+          </button>
+        </div>
+
+        <div class="ocr-progress-box hidden" id="ocr-progress-box" style="margin-bottom:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong id="ocr-status-text">Initializing offline OCR...</strong>
+            <span class="mono-tabular" id="ocr-progress-pct">0%</span>
+          </div>
+          <div class="progress-rail" style="margin-bottom:0;">
+            <div class="progress-bar" id="ocr-progress-bar"></div>
+          </div>
+        </div>
+
+        <div class="weeks-grid" id="weeks-grid"></div>
+      </section>
+
+      <!-- TAB 3: SETTINGS -->
+      <section id="tab-settings" class="tab-panel" aria-labelledby="nav-label-settings">
+        <div class="section-header-row">
+          <div>
+            <h2 class="section-heading" id="txt-settings-heading">Settings</h2>
+            <p class="section-subtitle" id="txt-settings-sub">Language, display, screen wake lock, and vibration alerts.</p>
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <!-- General & Display Card -->
+          <div class="surface-card">
+            <h3 class="section-heading" style="font-size:16px; margin-bottom:6px;" id="txt-general-card-title">Display & Language</h3>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-title" id="txt-setting-lang-title">Language</div>
+                <div class="setting-desc" id="txt-setting-lang-desc">Translates all UI labels and overtime reports.</div>
+              </div>
+              <div class="segmented-control">
+                <button type="button" class="segmented-btn" id="btn-lang-en">English</button>
+                <button type="button" class="segmented-btn" id="btn-lang-tl">Tagalog</button>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-title" id="txt-setting-theme-title">Appearance</div>
+                <div class="setting-desc" id="txt-setting-theme-desc">Switch between Midnight dark and Clean Light.</div>
+              </div>
+              <div class="segmented-control">
+                <button type="button" class="segmented-btn" id="btn-theme-midnight">Midnight</button>
+                <button type="button" class="segmented-btn" id="btn-theme-light">Light</button>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-title" id="txt-setting-awake-title">Keep Screen Awake</div>
+                <div class="setting-desc" id="txt-setting-awake-desc">Prevents Android display from sleeping during meetings.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="toggle-keep-awake" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Comprehensive Vibration Settings Card -->
+          <div class="surface-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
+              <h3 class="section-heading" style="font-size:16px;" id="txt-vib-card-title">Vibration Alerts</h3>
+              <button type="button" class="btn btn-compact btn-secondary" id="btn-test-vibration">
+                <span id="txt-test-vibration">Test Vibration</span>
+              </button>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-title" id="txt-vib-master-title">Enable Vibration Alerts</div>
+                <div class="setting-desc" id="txt-vib-master-desc">Master toggle for countdown haptic cues.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="toggle-vib-enabled" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-title" id="txt-vib-60-title">1:00 Remaining (Single Pulse)</div>
+                <div class="setting-desc" id="txt-vib-60-desc">Gentle cue when 1 minute remains.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="toggle-vib-60" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-title" id="txt-vib-30-title">0:30 Remaining (Double Pulse)</div>
+                <div class="setting-desc" id="txt-vib-30-desc">Double tap warning at 30 seconds left.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="toggle-vib-30" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-title" id="txt-vib-0-title">0:00 Time's Up (Long Buzz)</div>
+                <div class="setting-desc" id="txt-vib-0-desc">Extended 2-second alert when time expires.</div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="toggle-vib-0" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-row" style="flex-direction:column; align-items:stretch;">
+              <div style="display:flex; justify-content:space-between;">
+                <span class="setting-title" id="txt-vib-intensity-title">Pulse Duration / Intensity</span>
+                <span class="mono-tabular" id="txt-vib-intensity-val">100%</span>
+              </div>
+              <input type="range" min="50" max="150" step="10" value="100" class="range-control" id="range-vib-intensity" />
+            </div>
+
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; margin-top:12px;">
+              <div class="field-group">
+                <label class="field-label" for="input-vib-60-ms" id="txt-lbl-60-ms">1:00 (ms)</label>
+                <input type="number" min="50" max="1000" step="50" class="input-control mono-tabular" id="input-vib-60-ms" />
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="input-vib-30-ms" id="txt-lbl-30-ms">0:30 (ms)</label>
+                <input type="number" min="50" max="1000" step="50" class="input-control mono-tabular" id="input-vib-30-ms" />
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="input-vib-0-ms" id="txt-lbl-0-ms">0:00 (ms)</label>
+                <input type="number" min="500" max="4000" step="100" class="input-control mono-tabular" id="input-vib-0-ms" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Fixed 3-Tab Bottom Navigation -->
+    <nav class="bottom-nav" aria-label="Main navigation">
+      <div class="bottom-nav-inner">
+        <button type="button" class="bottom-nav-btn active" data-tab="timer" id="nav-btn-timer">
+          <span class="nav-icon" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/><path d="M10 2h4"/></svg>
+          </span>
+          <span class="nav-label" id="nav-label-timer">Timer</span>
+        </button>
+
+        <button type="button" class="bottom-nav-btn" data-tab="schedules" id="nav-btn-schedules">
+          <span class="nav-icon" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>
+          </span>
+          <span class="nav-label" id="nav-label-schedules">Schedules</span>
+        </button>
+
+        <button type="button" class="bottom-nav-btn" data-tab="settings" id="nav-btn-settings">
+          <span class="nav-icon" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          </span>
+          <span class="nav-label" id="nav-label-settings">Settings</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- SHEET 1: MANUAL EDIT / ADD-PART DRAWER -->
+    <div class="sheet-backdrop" id="drawer-week-editor">
+      <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="txt-editor-drawer-title">
+        <div class="sheet-header">
+          <h3 class="section-heading" style="font-size:16px;" id="txt-editor-drawer-title">Edit Week Schedule</h3>
+          <button type="button" class="btn btn-compact btn-ghost" id="btn-close-editor-drawer">✕</button>
+        </div>
+
+        <div class="sheet-body">
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
+            <div class="field-group">
+              <label class="field-label" for="edit-week-label" id="txt-edit-week-label">Week Date</label>
+              <input type="text" class="input-control" id="edit-week-label" placeholder="December 4, 2026" />
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="edit-week-cong" id="txt-edit-week-cong">Congregation</label>
+              <input type="text" class="input-control" id="edit-week-cong" placeholder="Kingdom Hall" />
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="edit-week-chairman" id="txt-edit-week-chair">Chairman</label>
+              <input type="text" class="input-control" id="edit-week-chairman" placeholder="Chairman Name" />
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:4px;">
+            <strong id="txt-editor-parts-label">Parts</strong>
+            <button type="button" class="btn btn-compact btn-primary" id="btn-add-part-row">
+              <span id="txt-add-part-row">+ Add Part</span>
+            </button>
+          </div>
+
+          <div id="editor-parts-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+        </div>
+
+        <div class="sheet-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-editor-drawer">
+            <span id="txt-cancel-editor">Cancel</span>
+          </button>
+          <button type="button" class="btn btn-primary" id="btn-save-editor-drawer">
+            <span id="txt-save-editor">Save Week</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SHEET 2: OCR EDITABLE PREVIEW TABLE -->
+    <div class="sheet-backdrop" id="modal-ocr-preview">
+      <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="txt-ocr-preview-title">
+        <div class="sheet-header">
+          <div>
+            <h3 class="section-heading" style="font-size:16px;" id="txt-ocr-preview-title">Review Scanned Schedule</h3>
+            <p class="section-subtitle" id="ocr-mode-note"></p>
+          </div>
+          <button type="button" class="btn btn-compact btn-ghost" id="btn-close-ocr-preview">✕</button>
+        </div>
+
+        <div class="sheet-body">
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
+            <div class="field-group">
+              <label class="field-label" for="ocr-week-label" id="txt-ocr-week-label">Week Date</label>
+              <input type="text" class="input-control" id="ocr-week-label" />
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="ocr-chairman" id="txt-ocr-chairman">Chairman</label>
+              <input type="text" class="input-control" id="ocr-chairman" />
+            </div>
+          </div>
+
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th id="th-ocr-part">Part Title</th>
+                  <th id="th-ocr-section">Section</th>
+                  <th style="width:76px;" id="th-ocr-min">Min</th>
+                  <th id="th-ocr-speaker">Speaker</th>
+                  <th id="th-ocr-asst">Assistant</th>
+                  <th style="width:52px;"></th>
+                </tr>
+              </thead>
+              <tbody id="ocr-preview-tbody"></tbody>
+            </table>
+          </div>
+
+          <button type="button" class="btn btn-compact btn-secondary" id="btn-ocr-add-row" style="align-self:flex-start;">
+            <span id="txt-ocr-add-row">+ Add Row</span>
+          </button>
+        </div>
+
+        <div class="sheet-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-ocr-preview">
+            <span id="txt-cancel-ocr">Cancel</span>
+          </button>
+          <button type="button" class="btn btn-success" id="btn-save-ocr-week">
+            <span id="txt-save-ocr">Save Schedule Week</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SHEET 3: PASTE SCHEDULE TEXT AUTO-FILL -->
+    <div class="sheet-backdrop" id="modal-text-autofill">
+      <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="txt-autofill-title">
+        <div class="sheet-header">
+          <h3 class="section-heading" style="font-size:16px;" id="txt-autofill-title">Paste Schedule Text</h3>
+          <button type="button" class="btn btn-compact btn-ghost" id="btn-close-text-autofill">✕</button>
+        </div>
+
+        <div class="sheet-body">
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn btn-compact btn-secondary" id="btn-autofill-sample">
+              <span id="txt-autofill-sample">Load Sample Template</span>
+            </button>
+            <button type="button" class="btn btn-compact btn-ghost" id="btn-autofill-clear">
+              <span id="txt-autofill-clear">Clear</span>
+            </button>
+          </div>
+
+          <textarea class="textarea-control" id="autofill-textarea" placeholder="DATE: December 4, 2026&#10;CHAIRMAN: Brother Name&#10;&#10;1. KAYAMANAN MULA SA SALITA NG DIYOS&#10;Speaker: ...&#10;Gems Conductor: ...&#10;Bible Reader: ..."></textarea>
+
+          <div class="ocr-progress-box" id="autofill-live-summary"></div>
+        </div>
+
+        <div class="sheet-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-text-autofill">
+            <span id="txt-cancel-autofill">Cancel</span>
+          </button>
+          <button type="button" class="btn btn-primary" id="btn-apply-text-autofill">
+            <span id="txt-apply-autofill">Save as Week</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SHEET 4: CLEAN PLAIN-TEXT OVERTIME SUMMARY -->
+    <div class="sheet-backdrop" id="modal-summary">
+      <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="txt-summary-title">
+        <div class="sheet-header">
+          <div>
+            <h3 class="section-heading" style="font-size:16px;" id="txt-summary-title">Meeting Overtime Summary</h3>
+            <p class="section-subtitle" id="summary-week-sub"></p>
+          </div>
+          <button type="button" class="btn btn-compact btn-ghost" id="btn-close-summary">✕</button>
+        </div>
+
+        <div class="sheet-body">
+          <div class="summary-kpi-row">
+            <div class="summary-kpi-box">
+              <div class="summary-kpi-label" id="txt-sum-allotted">Allotted</div>
+              <div class="summary-kpi-val mono-tabular" id="sum-val-allotted">00:00</div>
+            </div>
+            <div class="summary-kpi-box">
+              <div class="summary-kpi-label" id="txt-sum-actual">Actual</div>
+              <div class="summary-kpi-val mono-tabular" id="sum-val-actual">00:00</div>
+            </div>
+            <div class="summary-kpi-box">
+              <div class="summary-kpi-label" id="txt-sum-overtime">Net Variance</div>
+              <div class="summary-kpi-val mono-tabular" id="sum-val-overtime">00:00</div>
+            </div>
+          </div>
+
+          <div class="data-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th id="th-sum-part">Part</th>
+                  <th id="th-sum-speaker">Speaker</th>
+                  <th id="th-sum-allotted">Allotted</th>
+                  <th id="th-sum-actual">Actual</th>
+                  <th id="th-sum-overtime">Overtime</th>
+                </tr>
+              </thead>
+              <tbody id="summary-table-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="summary-plain-text" id="txt-sum-preview-label">Plain-Text Report (Viber / Messenger Ready)</label>
+            <textarea class="textarea-control" id="summary-plain-text" readonly style="min-height:170px;"></textarea>
+          </div>
+        </div>
+
+        <div class="sheet-footer">
+          <button type="button" class="btn btn-secondary" id="btn-close-summary-footer">
+            <span id="txt-close-summary">Close</span>
+          </button>
+          <button type="button" class="btn btn-success" id="btn-copy-plain-report">
+            <span id="txt-copy-plain-report">Copy Plain-Text Report</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast-banner" id="toast-banner" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/src/js/app.js"></script>
+  </body>
+</html>

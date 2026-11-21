@@ -1,0 +1,137 @@
+:root,
+body.theme-midnight {
+  --bg-canvas: #080f1f;
+  --bg-surface: #0f182e;
+  --bg-elevated: #16233f;
+  --bg-inset: #050a16;
+  --bg-hover: #1b2b4d;
+  --border-subtle: rgba(148, 163, 184, 0.16);
+  --border-strong: rgba(148, 163, 184, 0.28);
+
+  --text-primary: #f8fafc;
+  --text-heading: #ffffff;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-primary-soft: rgba(37, 99, 235, 0.16);
+
+  --state-ontime: #10b981;
+  --state-ontime-soft: rgba(16, 185, 129, 0.14);
+  --state-warning: #f59e0b;
+  --state-warning-soft: rgba(245, 158, 11, 0.16);
+  --state-overtime: #ef4444;
+  --state-overtime-soft: rgba(239, 68, 68, 0.16);
+
+  /* JW Midweek Section Colors */
+  --sec-opening-fg: #60a5fa;
+  --sec-opening-bg: rgba(37, 99, 235, 0.15);
+  --sec-treasures-fg: #fbbf24;
+  --sec-treasures-bg: rgba(180, 83, 9, 0.2);
+  --sec-ministry-fg: #fb923c;
+  --sec-ministry-bg: rgba(194, 65, 12, 0.22);
+  --sec-living-fg: #f87171;
+  --sec-living-bg: rgba(159, 18, 57, 0.22);
+
+  --nav-backdrop: rgba(9, 16, 32, 0.92);
+  --modal-backdrop: rgba(2, 6, 23, 0.78);
+  --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.28);
+
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+body.theme-light {
+  --bg-canvas: #f4f6f9;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f8fafc;
+  --bg-inset: #eef2f6;
+  --bg-hover: #edf2f7;
+  --border-subtle: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.2);
+
+  --text-primary: #0f172a;
+  --text-heading: #020617;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-primary-soft: rgba(37, 99, 235, 0.1);
+
+  --state-ontime: #059669;
+  --state-ontime-soft: rgba(5, 150, 105, 0.12);
+  --state-warning: #d97706;
+  --state-warning-soft: rgba(217, 119, 6, 0.14);
+  --state-overtime: #dc2626;
+  --state-overtime-soft: rgba(220, 38, 38, 0.12);
+
+  /* JW Midweek Section Colors - High Contrast Light */
+  --sec-opening-fg: #1e40af;
+  --sec-opening-bg: #dbeafe;
+  --sec-treasures-fg: #92400e;
+  --sec-treasures-bg: #fef3c7;
+  --sec-ministry-fg: #9a3412;
+  --sec-ministry-bg: #ffedd5;
+  --sec-living-fg: #991b1b;
+  --sec-living-bg: #ffe4e6;
+
+  --nav-backdrop: rgba(255, 255, 255, 0.94);
+  --modal-backdrop: rgba(15, 23, 42, 0.55);
+  --shadow-card: 0 2px 12px rgba(15, 23, 42, 0.06);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.mono-tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

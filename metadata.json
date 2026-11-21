@@ -1,0 +1,6 @@
+{
+  "name": "Midweek Timer",
+  "description": "Offline Midweek Meeting Timer with S-140/KHS schedule OCR scanner, vibration alerts, plain-text overtime reporting, and native Android floating overlay.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
