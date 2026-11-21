@@ -19,7 +19,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Set up Java 21
         uses: actions/setup-java@v4
@@ -28,7 +27,7 @@ jobs:
           java-version: '21'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build web bundle to dist/
         run: npm run build
@@ -66,10 +65,14 @@ jobs:
             // 2. Apply kotlin-android plugin and JVM target in android/app/build.gradle
             let appGradle = fs.readFileSync("android/app/build.gradle", "utf8");
             if (!appGradle.includes("kotlin-android")) {
-              appGradle = appGradle.replace(
-                "apply plugin: '\''com.android.application'\''",
-                "apply plugin: '\''com.android.application'\''\napply plugin: '\''kotlin-android'\''"
-              );
+              if (appGradle.includes("apply plugin: '\''com.android.application'\''")) {
+                appGradle = appGradle.replace(
+                  "apply plugin: '\''com.android.application'\''",
+                  "apply plugin: '\''com.android.application'\''\napply plugin: '\''kotlin-android'\''"
+                );
+              } else {
+                appGradle = "apply plugin: '\''kotlin-android'\''\n" + appGradle;
+              }
             }
             if (!appGradle.includes("kotlinOptions")) {
               appGradle = appGradle.replace(
