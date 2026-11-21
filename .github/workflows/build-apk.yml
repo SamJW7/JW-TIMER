@@ -62,7 +62,7 @@ jobs:
               fs.writeFileSync("android/build.gradle", rootGradle);
             }
 
-            // 2. Apply kotlin-android plugin and JVM target in android/app/build.gradle
+            // 2. Apply kotlin-android plugin and JVM 21 target in android/app/build.gradle
             let appGradle = fs.readFileSync("android/app/build.gradle", "utf8");
             if (!appGradle.includes("kotlin-android")) {
               if (appGradle.includes("apply plugin: '\''com.android.application'\''")) {
@@ -75,10 +75,7 @@ jobs:
               }
             }
             if (!appGradle.includes("kotlinOptions")) {
-              appGradle = appGradle.replace(
-                "buildTypes {",
-                "compileOptions {\n        sourceCompatibility JavaVersion.VERSION_17\n        targetCompatibility JavaVersion.VERSION_17\n    }\n    kotlinOptions {\n        jvmTarget = '\''17'\''\n    }\n    buildTypes {"
-              );
+              appGradle += "\nandroid {\n    kotlinOptions {\n        jvmTarget = '\''21'\''\n    }\n}\n";
             }
             fs.writeFileSync("android/app/build.gradle", appGradle);
           '
