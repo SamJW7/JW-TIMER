@@ -9,11 +9,15 @@ import {
 
 const SKIP_SONG_RE = /(?:^|\b)(?:awit(?:\s+blg\.?)?|song(?:\s+no\.?)?)\s*\d*\b/i;
 const SKIP_PRAYER_RE = /\b(?:panalangin|opening\s+prayer|closing\s+prayer|prayer)\b/i;
+const PRAYER_ROLE_RE = /\b(?:(?:opening|closing)\s+prayer|(?:(?:pambungad|pangwakas)\s+na\s+)?panalangin|prayer)\s*[:\-]\s*/gi;
+const PRAYER_NO_COLON_RE = /\b(?:(?:opening|closing)\s+prayer|(?:pambungad|pangwakas)\s+na\s+panalangin|panalangin)\b/gi;
+const READER_DROP_RE = /\b(?:CBS\s*Reader|Watchtower\s*Reader|Tagabasa(?:\s+sa\s+Pag-aaral|\s+ng\s+Bantayan)?|Reader)\s*[:\-]\s*/gi;
+const META_DROP_RE = /\b(?:Date|Petsa|Congregation|Kongregasyon|Time|Oras)\s*[:\-]\s*/gi;
 const SKIP_READER_RE = /\b(?:cbs\s+reader|watchtower\s+reader|congregation\s+bible\s+study\s+reader|tagabasa(?:\s+sa\s+pag-aaral|\s+ng\s+bantayan)?)\b/i;
 const PURE_READER_RE = /^reader\s*[:\-]/i;
 
-const OPENING_COMMENT_RE = /pambungad\s+na\s+komento|opening\s+comments?/i;
-const CONCLUDING_COMMENT_RE = /pangwakas\s+na\s+komento|concluding\s+comments?|closing\s+comments?/i;
+const OPENING_COMMENT_RE = /pambungad\s+(?:na\s+(?:mga\s+)?)?komento|opening\s+comments?/i;
+const CONCLUDING_COMMENT_RE = /pangwakas\s+(?:na\s+(?:mga\s+)?)?komento|concluding\s+comments?|closing\s+comments?/i;
 
 const ROLE_ENTRY_RE =
   /(Chairman|Tagapangulo|LN\s*Speaker|CBS\s*Conductor|Gems\s*Conductor|Student\s*Speaker|Speaker(?:\s*\d+)?|Tagapagsalita(?:\s*\d+)?|Bible\s*Reader|Tagabasa\s*sa\s*Bibliya|Student(?:\s*\d+)?|Estudyante(?:\s*\d+)?|Assistant(?:\s*\d+)?|Katulong(?:\s*\d+)?|Conductor|Kondyaktor)\s*[:\-]\s*/gi;
@@ -363,37 +367,120 @@ export function cleanPersonName(rawName) {
   return normalized;
 }
 
+function collectRoleAndDropMarkers(cleanText) {
+  const markers = [];
+  let match;
+
+  const roleRe = new RegExp(ROLE_ENTRY_RE.source, 'gi');
+  while ((match = roleRe.exec(cleanText)) !== null) {
+    markers.push({
+      role: normalizeRoleLabel(match[1]),
+      startIndex: match.index,
+      valueStart: match.index + match[0].length,
+      drop: false,
+    });
+  }
+
+  // Detect Prayer / Opening Prayer / Closing Prayer / Panalangin inline so they are strictly ignored & stripped
+  const prayerRe = new RegExp(PRAYER_ROLE_RE.source, 'gi');
+  while ((match = prayerRe.exec(cleanText)) !== null) {
+    markers.push({
+      role: '__DROP_PRAYER__',
+      startIndex: match.index,
+      valueStart: match.index + match[0].length,
+      drop: true,
+    });
+  }
+
+  // Fallback for prayer labels where OCR omitted the colon (e.g., "Opening Prayer Juan Cruz", "Panalangin Juan Cruz")
+  const prayerNoColonRe = new RegExp(PRAYER_NO_COLON_RE.source, 'gi');
+  while ((match = prayerNoColonRe.exec(cleanText)) !== null) {
+    const overlapsExisting = markers.some(
+      (m) => match.index >= m.startIndex && match.index < m.valueStart
+    );
+    if (!overlapsExisting) {
+      markers.push({
+        role: '__DROP_PRAYER__',
+        startIndex: match.index,
+        valueStart: match.index + match[0].length,
+        drop: true,
+      });
+    }
+  }
+
+  // Detect CBS Reader / Watchtower Reader / Tagabasa / bare Reader inline so we can drop it cleanly
+  const readerRe = new RegExp(READER_DROP_RE.source, 'gi');
+  while ((match = readerRe.exec(cleanText)) !== null) {
+    const prefixCheck = cleanText.slice(Math.max(0, match.index - 7), match.index).toLowerCase();
+    if (prefixCheck.includes('bible')) continue;
+    markers.push({
+      role: '__DROP_READER__',
+      startIndex: match.index,
+      valueStart: match.index + match[0].length,
+      drop: true,
+    });
+  }
+
+  // Detect metadata labels (Date:, Congregation:, etc.) inline so they do not bleed into Chairman
+  const metaRe = new RegExp(META_DROP_RE.source, 'gi');
+  while ((match = metaRe.exec(cleanText)) !== null) {
+    markers.push({
+      role: '__DROP_META__',
+      startIndex: match.index,
+      valueStart: match.index + match[0].length,
+      drop: true,
+    });
+  }
+
+  markers.sort((a, b) => a.startIndex - b.startIndex || b.valueStart - a.valueStart);
+
+  // Deduplicate overlapping markers cleanly
+  const deduped = [];
+  for (const m of markers) {
+    const prev = deduped[deduped.length - 1];
+    if (prev && m.startIndex < prev.valueStart) continue;
+    deduped.push(m);
+  }
+  return deduped;
+}
+
+function stripIgnoredRoleClauses(rawText) {
+  const clean = (rawText || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+
+  const markers = collectRoleAndDropMarkers(clean);
+  if (markers.length === 0) return clean;
+
+  let cursor = 0;
+  let kept = '';
+  for (let i = 0; i < markers.length; i++) {
+    const cur = markers[i];
+    const next = markers[i + 1];
+    const end = next ? next.startIndex : clean.length;
+    if (cur.startIndex > cursor) {
+      kept += clean.slice(cursor, cur.startIndex);
+    }
+    if (!cur.drop) {
+      kept += clean.slice(cur.startIndex, end);
+    }
+    cursor = end;
+  }
+  if (cursor < clean.length) {
+    kept += clean.slice(cursor);
+  }
+
+  return kept
+    .replace(/\s*[|/;]+\s*(?=[|/;]|$)/g, ' ')
+    .replace(/^[\s|/;,&-]+|[\s|/;,&-]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function extractRoleSegments(rawText) {
   const clean = (rawText || '').replace(/\s+/g, ' ').trim();
   if (!clean) return [];
 
-  const matches = [];
-  let match;
-  const re = new RegExp(ROLE_ENTRY_RE.source, 'gi');
-  while ((match = re.exec(clean)) !== null) {
-    matches.push({
-      rawRole: match[1],
-      role: normalizeRoleLabel(match[1]),
-      startIndex: match.index,
-      valueStart: match.index + match[0].length,
-    });
-  }
-
-  // Detect CBS Reader / Watchtower Reader / Tagabasa / bare Reader inline so we can drop it cleanly
-  const readerRe = /\b(?:CBS\s*Reader|Watchtower\s*Reader|Tagabasa(?:\s+sa\s+Pag-aaral|\s+ng\s+Bantayan)?|Reader)\s*[:\-]\s*/gi;
-  const readerMatches = [];
-  let rMatch;
-  while ((rMatch = readerRe.exec(clean)) !== null) {
-    const prefixCheck = clean.slice(Math.max(0, rMatch.index - 7), rMatch.index).toLowerCase();
-    if (prefixCheck.includes('bible')) continue;
-    readerMatches.push({
-      role: '__DROP_READER__',
-      startIndex: rMatch.index,
-      valueStart: rMatch.index + rMatch[0].length,
-    });
-  }
-
-  const allMarkers = [...matches, ...readerMatches].sort((a, b) => a.startIndex - b.startIndex);
+  const allMarkers = collectRoleAndDropMarkers(clean);
   if (allMarkers.length === 0) return [];
 
   const segments = [];
@@ -401,12 +488,13 @@ function extractRoleSegments(rawText) {
     const cur = allMarkers[i];
     const next = allMarkers[i + 1];
     const end = next ? next.startIndex : clean.length;
+    if (cur.drop) continue;
     const rawVal = clean
       .slice(cur.valueStart, end)
       .replace(/^[\s/|&-]+|[\s/|&-]+$/g, '')
       .trim();
-    const val = cur.role !== '__DROP_READER__' ? cleanPersonName(rawVal) : '';
-    if (cur.role !== '__DROP_READER__' && val) {
+    const val = cleanPersonName(rawVal);
+    if (val) {
       const sanitized = sanitizeRoleValue(`${cur.role}: ${val}`);
       if (sanitized) {
         segments.push({ role: cur.role, full: sanitized, value: val });
@@ -416,8 +504,27 @@ function extractRoleSegments(rawText) {
   return segments;
 }
 
+function extractChairmanFromText(rawText) {
+  const stripped = stripIgnoredRoleClauses(rawText);
+  if (!stripped) return '';
+
+  const segments = extractRoleSegments(stripped);
+  const chairSeg = segments.find((seg) => seg.role === 'Chairman');
+  if (chairSeg?.full) {
+    return sanitizeRoleValue(chairSeg.full);
+  }
+
+  const chMatch = stripped.match(/(?:chairman|tagapangulo)\s*[:\-]\s*(.+)$/i);
+  if (chMatch) {
+    const beforePipe = chMatch[1].split(/\s*[|•]\s*/)[0];
+    const cleanedName = cleanPersonName(beforePipe);
+    return sanitizeRoleValue(cleanedName ? `Chairman: ${cleanedName}` : '');
+  }
+  return '';
+}
+
 function parseRoleNames(rawNames, section, title) {
-  let clean = (rawNames || '').replace(/\s+/g, ' ').trim();
+  let clean = stripIgnoredRoleClauses(rawNames);
   if (!clean || isDescriptionSubLine(clean)) return { speaker: '', assistant: '' };
 
   const bibleReading = isBibleReading(title);
@@ -465,6 +572,9 @@ function parseRoleNames(rawNames, section, title) {
   }
 
   if (section === 'opening' || section === 'concluding') {
+    if (SKIP_SONG_RE.test(clean) || SKIP_PRAYER_RE.test(clean)) {
+      return { speaker: '', assistant: '' };
+    }
     const chairName = cleanPersonName(clean);
     return { speaker: sanitizeRoleValue(chairName ? `Chairman: ${chairName}` : ''), assistant: '' };
   }
@@ -546,12 +656,8 @@ function extractMetadataFromText(fullText) {
       if (m) weekLabel = m[0].replace(/\s+/g, ' ').trim();
     }
     if (!chairman) {
-      const chMatch = line.match(/(?:chairman|tagapangulo)\s*[:\-]\s*(.+)$/i);
-      if (chMatch) {
-        const cleanChair = cleanPersonName(chMatch[1]);
-        const cleaned = sanitizeRoleValue(cleanChair ? `Chairman: ${cleanChair}` : '');
-        if (cleaned) chairman = cleaned;
-      }
+      const foundChair = extractChairmanFromText(line);
+      if (foundChair) chairman = foundChair;
     }
   }
 
@@ -572,7 +678,7 @@ function extractMinutesFromText(text) {
    PRIMARY S-140 / KHS 3-COLUMN Y-ROW PARSER
    Consumes Native ML Kit Text Blocks + Bounding Boxes
    ========================================================= */
-function parseS140ThreeColumn(data) {
+function parseS140ThreeColumn(data, defaultChairman = '') {
   const words = [];
   const blocks = Array.isArray(data?.blocks) ? data.blocks : [];
 
@@ -652,25 +758,26 @@ function parseS140ThreeColumn(data) {
   const midRightBound = Math.min(imageWidth * 0.82, medianMidX + imageWidth * 0.12);
 
   const parsedParts = [];
+  const explicitChairPartIds = new Set();
   let bannerSection = null;
   let extractedChairman = '';
   let lastPartSkipped = false;
+  let lastSkippedMinutes = null;
 
   for (const row of rows) {
     const rowText = row.fullText.trim();
     if (!rowText) continue;
 
-    const chMatch = rowText.match(/(?:chairman|tagapangulo)\s*[:\-]\s*(.+)/i);
-    if (chMatch && !extractedChairman) {
-      const cleanedName = cleanPersonName(chMatch[1]);
-      const cleanChair = sanitizeRoleValue(cleanedName ? `Chairman: ${cleanedName}` : '');
-      if (cleanChair) extractedChairman = cleanChair;
+    const foundRowChair = extractChairmanFromText(rowText);
+    if (foundRowChair && !extractedChairman) {
+      extractedChairman = foundRowChair;
     }
 
     const secHeader = detectSectionHeader(rowText);
     if (secHeader) {
       bannerSection = secHeader;
       lastPartSkipped = false;
+      lastSkippedMinutes = null;
       if (isPureSectionHeader(rowText)) continue;
     }
 
@@ -700,12 +807,44 @@ function parseS140ThreeColumn(data) {
       minutes = extractMinutesFromText(leftText) || extractMinutesFromText(`${leftText} ${midText}`);
     }
 
-    // Handle rows without minutes (stacked role lines OR unnumbered sub-descriptions)
+    // Handle rows without minutes (split Opening/Concluding Comments line OR stacked role lines)
     if (!minutes || minutes < 1 || minutes > 60) {
+      const splitCommentMeta =
+        extractCommentFromMixedRow(leftText) || extractCommentFromMixedRow(rowText);
+      if (
+        splitCommentMeta &&
+        !parsedParts.some((p) => p.section === splitCommentMeta.section)
+      ) {
+        lastPartSkipped = false;
+        const explicitChair =
+          extractChairmanFromText(rightText) || extractChairmanFromText(rowText);
+        if (explicitChair && !extractedChairman) extractedChairman = explicitChair;
+        const { speaker } = parseRoleNames(
+          rightText,
+          splitCommentMeta.section,
+          splitCommentMeta.title
+        );
+        const part = normalizePart({
+          id: generateId('part'),
+          title: splitCommentMeta.title,
+          section: splitCommentMeta.section,
+          speaker: explicitChair || speaker || extractedChairman,
+          assistant: '',
+          isTalk: true,
+          plannedMinutes:
+            lastSkippedMinutes || (splitCommentMeta.section === 'opening' ? 1 : 3),
+        });
+        if (explicitChair) explicitChairPartIds.add(part.id);
+        parsedParts.push(part);
+        lastSkippedMinutes = null;
+        continue;
+      }
+
       if (lastPartSkipped) continue;
 
-      const candidateNameText =
+      const rawCandidate =
         rightText || (new RegExp(ROLE_ENTRY_RE.source, 'i').test(rowText) ? rowText : '');
+      const candidateNameText = stripIgnoredRoleClauses(rawCandidate);
 
       if (
         candidateNameText &&
@@ -714,6 +853,15 @@ function parseS140ThreeColumn(data) {
         !isDescriptionSubLine(candidateNameText)
       ) {
         const prev = parsedParts[parsedParts.length - 1];
+        if (prev.section === 'opening' || prev.section === 'concluding') {
+          const explicitChair = extractChairmanFromText(candidateNameText);
+          if (explicitChair) {
+            prev.speaker = explicitChair;
+            explicitChairPartIds.add(prev.id);
+            if (!extractedChairman) extractedChairman = explicitChair;
+          }
+          continue;
+        }
         const merged = mergeStackedRightText(
           prev.speaker,
           prev.assistant,
@@ -736,28 +884,34 @@ function parseS140ThreeColumn(data) {
 
     if (commentMeta) {
       lastPartSkipped = false;
+      lastSkippedMinutes = null;
+      const explicitChair =
+        extractChairmanFromText(rightText) || extractChairmanFromText(rowText);
+      if (explicitChair && !extractedChairman) extractedChairman = explicitChair;
       const { speaker } = parseRoleNames(rightText, commentMeta.section, commentMeta.title);
-      parsedParts.push(
-        normalizePart({
-          id: generateId('part'),
-          title: commentMeta.title,
-          section: commentMeta.section,
-          speaker: speaker || extractedChairman,
-          assistant: '',
-          isTalk: true,
-          plannedMinutes: minutes,
-        })
-      );
+      const part = normalizePart({
+        id: generateId('part'),
+        title: commentMeta.title,
+        section: commentMeta.section,
+        speaker: explicitChair || speaker || extractedChairman,
+        assistant: '',
+        isTalk: true,
+        plannedMinutes: minutes,
+      });
+      if (explicitChair) explicitChairPartIds.add(part.id);
+      parsedParts.push(part);
       continue;
     }
 
     const title = cleanPartTitle(leftText);
     if (!title || title.length < 2 || isSkippedRow(title)) {
       lastPartSkipped = true;
+      lastSkippedMinutes = minutes;
       continue;
     }
 
     lastPartSkipped = false;
+    lastSkippedMinutes = null;
 
     // Strictly respect detected section banner (never override banner with keyword guessing)
     const partSection = bannerSection || inferSectionFromTitle(title);
@@ -777,31 +931,43 @@ function parseS140ThreeColumn(data) {
     );
   }
 
-  return parsedParts.length >= 3 ? { parts: parsedParts, chairman: extractedChairman } : null;
+  // Always assign Chairman: [Chairman Name] to Opening/Concluding Comments (using header or row Chairman)
+  const resolvedChairman = extractedChairman || sanitizeRoleValue(defaultChairman);
+  if (resolvedChairman) {
+    parsedParts.forEach((p) => {
+      if ((p.section === 'opening' || p.section === 'concluding') && !explicitChairPartIds.has(p.id)) {
+        p.speaker = resolvedChairman;
+      }
+    });
+  }
+
+  return parsedParts.length >= 3 ? { parts: parsedParts, chairman: resolvedChairman } : null;
 }
 
 /* =========================================================
    PLAN B ADAPTIVE REGEX PARSER (SUPPORTS STACKED ROLE LINES)
    ========================================================= */
-function parsePlanBRegex(fullText) {
+function parsePlanBRegex(fullText, defaultChairman = '') {
   const lines = (fullText || '')
     .split('\n')
     .map((l) => l.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
 
   const parts = [];
+  const explicitChairPartIds = new Set();
   let bannerSection = null;
   let extractedChairman = '';
   let lastPartSkipped = false;
+  let lastSkippedMinutes = null;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    const chMatch = line.match(/^(?:chairman|tagapangulo)\s*[:\-]\s*(.+)$/i);
-    if (chMatch && !extractedChairman) {
-      const cleanedName = cleanPersonName(chMatch[1]);
-      const cleanChair = sanitizeRoleValue(cleanedName ? `Chairman: ${cleanedName}` : '');
-      if (cleanChair) extractedChairman = cleanChair;
+    const lineChair = extractChairmanFromText(line);
+    if (lineChair && !extractedChairman) {
+      extractedChairman = lineChair;
+    }
+    if (/^(?:chairman|tagapangulo)\s*[:\-]/i.test(line)) {
       continue;
     }
 
@@ -809,6 +975,7 @@ function parsePlanBRegex(fullText) {
     if (secHeader) {
       bannerSection = secHeader;
       lastPartSkipped = false;
+      lastSkippedMinutes = null;
       if (isPureSectionHeader(line)) continue;
     }
 
@@ -822,34 +989,41 @@ function parsePlanBRegex(fullText) {
 
       if (minutes < 1 || minutes > 60) {
         lastPartSkipped = true;
+        lastSkippedMinutes = null;
         continue;
       }
 
       const commentMeta = extractCommentFromMixedRow(rawLeft) || extractCommentFromMixedRow(line);
       if (commentMeta) {
         lastPartSkipped = false;
+        lastSkippedMinutes = null;
+        const explicitChair =
+          extractChairmanFromText(rightNames) || extractChairmanFromText(line);
+        if (explicitChair && !extractedChairman) extractedChairman = explicitChair;
         const { speaker } = parseRoleNames(rightNames, commentMeta.section, commentMeta.title);
-        parts.push(
-          normalizePart({
-            id: generateId('part'),
-            title: commentMeta.title,
-            section: commentMeta.section,
-            speaker: speaker || extractedChairman,
-            assistant: '',
-            isTalk: true,
-            plannedMinutes: minutes,
-          })
-        );
+        const part = normalizePart({
+          id: generateId('part'),
+          title: commentMeta.title,
+          section: commentMeta.section,
+          speaker: explicitChair || speaker || extractedChairman,
+          assistant: '',
+          isTalk: true,
+          plannedMinutes: minutes,
+        });
+        if (explicitChair) explicitChairPartIds.add(part.id);
+        parts.push(part);
         continue;
       }
 
       const title = cleanPartTitle(rawLeft);
       if (!title || title.length < 2 || isSkippedRow(title)) {
         lastPartSkipped = true;
+        lastSkippedMinutes = minutes;
         continue;
       }
 
       lastPartSkipped = false;
+      lastSkippedMinutes = null;
       const partSection = bannerSection || inferSectionFromTitle(title);
       const { speaker, assistant } = parseRoleNames(rightNames, partSection, title);
 
@@ -867,12 +1041,52 @@ function parsePlanBRegex(fullText) {
       continue;
     }
 
-    // Stacked role/name lines underneath the previous part (skip sub-descriptions)
-    if (!lastPartSkipped && parts.length > 0 && !isSkippedRow(line) && !isDescriptionSubLine(line)) {
+    // Handle Opening/Concluding Comments line split from preceding Song & Prayer (with no minutes on this line)
+    const splitCommentMeta = extractCommentFromMixedRow(line);
+    if (
+      splitCommentMeta &&
+      !parts.some((p) => p.section === splitCommentMeta.section)
+    ) {
+      lastPartSkipped = false;
+      const explicitChair = extractChairmanFromText(line);
+      if (explicitChair && !extractedChairman) extractedChairman = explicitChair;
+      const part = normalizePart({
+        id: generateId('part'),
+        title: splitCommentMeta.title,
+        section: splitCommentMeta.section,
+        speaker: explicitChair || extractedChairman,
+        assistant: '',
+        isTalk: true,
+        plannedMinutes: lastSkippedMinutes || (splitCommentMeta.section === 'opening' ? 1 : 3),
+      });
+      if (explicitChair) explicitChairPartIds.add(part.id);
+      parts.push(part);
+      lastSkippedMinutes = null;
+      continue;
+    }
+
+    // Stacked role/name lines underneath the previous part (skip sub-descriptions & prayer lines)
+    const cleanedLine = stripIgnoredRoleClauses(line);
+    if (
+      !lastPartSkipped &&
+      parts.length > 0 &&
+      cleanedLine &&
+      !isSkippedRow(cleanedLine) &&
+      !isDescriptionSubLine(cleanedLine)
+    ) {
       const prev = parts[parts.length - 1];
-      const hasRole = new RegExp(ROLE_ENTRY_RE.source, 'i').test(line);
+      const hasRole = new RegExp(ROLE_ENTRY_RE.source, 'i').test(cleanedLine);
       if (hasRole) {
-        const merged = mergeStackedRightText(prev.speaker, prev.assistant, line, prev.section, prev.title);
+        if (prev.section === 'opening' || prev.section === 'concluding') {
+          const explicitChair = extractChairmanFromText(cleanedLine);
+          if (explicitChair) {
+            prev.speaker = explicitChair;
+            explicitChairPartIds.add(prev.id);
+            if (!extractedChairman) extractedChairman = explicitChair;
+          }
+          continue;
+        }
+        const merged = mergeStackedRightText(prev.speaker, prev.assistant, cleanedLine, prev.section, prev.title);
         prev.speaker = merged.speaker;
         prev.assistant = merged.assistant;
         prev.isTalk = isBibleReading(prev.title) ? true : prev.section !== 'ministry' && !prev.assistant;
@@ -880,7 +1094,17 @@ function parsePlanBRegex(fullText) {
     }
   }
 
-  return { parts, chairman: extractedChairman };
+  // Always assign Chairman: [Chairman Name] to Opening/Concluding Comments (using header or row Chairman)
+  const resolvedChairman = extractedChairman || sanitizeRoleValue(defaultChairman);
+  if (resolvedChairman) {
+    parts.forEach((p) => {
+      if ((p.section === 'opening' || p.section === 'concluding') && !explicitChairPartIds.has(p.id)) {
+        p.speaker = resolvedChairman;
+      }
+    });
+  }
+
+  return { parts, chairman: resolvedChairman };
 }
 
 /* =========================================================
@@ -915,7 +1139,7 @@ export async function scanScheduleImageOffline(imageFile, onProgress, statusLabe
   });
 
   const meta = extractMetadataFromText(fullText);
-  const primary = parseS140ThreeColumn(data);
+  const primary = parseS140ThreeColumn(data, meta.chairman);
   if (primary && primary.parts.length >= 3) {
     onProgress?.({ status: 'Done', progress: 100 });
     return {
@@ -927,7 +1151,7 @@ export async function scanScheduleImageOffline(imageFile, onProgress, statusLabe
     };
   }
 
-  const planB = parsePlanBRegex(fullText);
+  const planB = parsePlanBRegex(fullText, meta.chairman);
   if (!planB.parts.length) {
     throw new Error('NO_TEXT_DETECTED');
   }
@@ -970,6 +1194,9 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
   for (const line of lines) {
     const upper = line.toUpperCase();
 
+    if (/^(?:(?:OPENING|CLOSING)\s+PRAYER|(?:(?:PAMBUNGAD|PANGWAKAS)\s+NA\s+)?PANALANGIN|PRAYER)\s*[:\-]/i.test(line)) {
+      continue;
+    }
     if (upper.startsWith('DATE:') || upper.startsWith('PETSA:')) {
       result.date = line.replace(/^(DATE:|PETSA:)/i, '').trim();
       continue;
@@ -979,17 +1206,28 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
       continue;
     }
     if (upper.startsWith('CHAIRMAN:') || upper.startsWith('TAGAPANGULO:')) {
-      result.chairman = cleanPersonName(line.replace(/^(CHAIRMAN:|TAGAPANGULO:)/i, ''));
+      const cleanedChair = extractChairmanFromText(line);
+      result.chairman = cleanPersonName(cleanedChair.replace(/^Chairman:\s*/i, ''));
       continue;
     }
     if (/^(PAMBUNGAD NA KOMENTO:|OPENING COMMENTS:|OPENING:|PAMBUNGAD:)/i.test(line)) {
-      result.openingSpeaker = cleanPersonName(line.replace(/^(PAMBUNGAD NA KOMENTO:|OPENING COMMENTS:|OPENING:|PAMBUNGAD:)/i, ''));
+      const afterPrefix = line.replace(/^(PAMBUNGAD NA KOMENTO:|OPENING COMMENTS:|OPENING:|PAMBUNGAD:)/i, '');
+      const chairFromLine = extractChairmanFromText(afterPrefix);
+      if (chairFromLine) {
+        result.openingSpeaker = cleanPersonName(chairFromLine.replace(/^Chairman:\s*/i, ''));
+      } else {
+        result.openingSpeaker = cleanPersonName(stripIgnoredRoleClauses(afterPrefix));
+      }
       continue;
     }
     if (/^(PANGWAKAS NA KOMENTO:|CONCLUDING COMMENTS:|CLOSING COMMENTS:|PANGWAKAS:|CLOSING:)/i.test(line)) {
-      result.concludingSpeaker = cleanPersonName(
-        line.replace(/^(PANGWAKAS NA KOMENTO:|CONCLUDING COMMENTS:|CLOSING COMMENTS:|PANGWAKAS:|CLOSING:)/i, '')
-      );
+      const afterPrefix = line.replace(/^(PANGWAKAS NA KOMENTO:|CONCLUDING COMMENTS:|CLOSING COMMENTS:|PANGWAKAS:|CLOSING:)/i, '');
+      const chairFromLine = extractChairmanFromText(afterPrefix);
+      if (chairFromLine) {
+        result.concludingSpeaker = cleanPersonName(chairFromLine.replace(/^Chairman:\s*/i, ''));
+      } else {
+        result.concludingSpeaker = cleanPersonName(stripIgnoredRoleClauses(afterPrefix));
+      }
       continue;
     }
 
