@@ -72,6 +72,9 @@ export const I18N = {
     settingAwakeDesc: 'Prevents Android display from sleeping during meetings.',
     settingAutoFloatTitle: 'Auto-Float When Leaving App',
     settingAutoFloatDesc: 'Automatically floats the pill over JW Library when a timer is running or paused mid-meeting.',
+    settingTutorialTitle: 'How to Use JW Timer',
+    settingTutorialDesc: 'View the 4-slide interactive walkthrough guide anytime.',
+    viewTutorialBtn: 'View Tutorial',
     vibCardTitle: 'Vibration Alerts',
     testVibration: 'Test Vibration',
     vibMasterTitle: 'Enable Vibration Alerts',
@@ -162,6 +165,52 @@ export const I18N = {
     toastOcrNoText: 'No schedule text was detected in that image. Try a sharper photo or Paste Schedule Text.',
     toastImageDecodeError: 'Failed to decode the selected image file. Please choose another image.',
     toastExitBrowser: 'Close this browser tab to exit web preview.',
+    walkthrough: {
+      headerTitle: 'Welcome to JW Timer',
+      skip: 'Skip',
+      back: 'Back',
+      next: 'Next',
+      getStarted: 'Get Started',
+      stepLabel: (idx, total) => `Step ${idx} of ${total}`,
+      slides: [
+        {
+          title: 'Import Schedules in Seconds',
+          desc: 'Start with a Midweek S-140 / KHS screenshot, paste text, or build a manual Weekend schedule — all 100% offline.',
+          tips: [
+            { label: 'Scan Image', detail: 'Reads Midweek schedules offline via native Android ML Kit.' },
+            { label: 'Paste Text', detail: 'Quickly auto-fill parts or load a blank template.' },
+            { label: 'Weekend Tab', detail: 'Create Public Talk & Watchtower Study agendas manually.' },
+          ],
+        },
+        {
+          title: 'Full-Screen Editor & Touch Drag-and-Drop',
+          desc: 'Customize any part title, speaker role, or duration inside the full-screen editor.',
+          tips: [
+            { label: 'Edit Anytime', detail: 'Tap Edit on any schedule card or directly from the Timer tab.' },
+            { label: 'Hold & Drag ⋮⋮', detail: 'Press and hold the grip handle to lift and reorder parts smoothly.' },
+            { label: 'Section Colors', detail: 'Color-coded accents keep Midweek & Weekend parts organized.' },
+          ],
+        },
+        {
+          title: 'Live Stage & Timing Controls',
+          desc: 'Stay on track during live meetings with responsive buttons and discreet haptic cues.',
+          tips: [
+            { label: 'Start / Next Part', detail: 'Run countdowns cleanly and jump between parts with one tap.' },
+            { label: '-30s / +30s & -1m / +1m', detail: 'Fix late/early clicks on the fly or adjust target minutes.' },
+            { label: 'Vibration Alerts', detail: 'Silent cues at 1:00, 0:30, and 0:00 — configurable in Settings.' },
+          ],
+        },
+        {
+          title: 'Auto-Float Over JW Library & Overtime Report',
+          desc: 'Keep timing visible while checking notes or scriptures in JW Library, then share results right after the meeting.',
+          tips: [
+            { label: 'Auto-Float Pill', detail: 'Pops up over JW Library once "Display over other apps" is allowed.' },
+            { label: '1-Tap Return', detail: 'Tap the floating pill anytime to jump straight back into JW Timer.' },
+            { label: 'Overtime Report', detail: 'Copy a clean plain-text summary in 1 tap for Viber or Messenger.' },
+          ],
+        },
+      ],
+    },
   },
   tl: {
     appTitle: 'JW Timer',
@@ -236,6 +285,9 @@ export const I18N = {
     settingAwakeDesc: 'Pinipigilan ang pagtulog ng screen habang may pulong.',
     settingAutoFloatTitle: 'Auto-Float Kapag Lumabas sa App',
     settingAutoFloatDesc: 'Awtomatikong lumulutang ang timer pill sa ibabaw ng JW Library kapag tumatakbo o naka-pause sa gitna ng pulong.',
+    settingTutorialTitle: 'Paano Gamitin ang JW Timer',
+    settingTutorialDesc: 'Buksan ulit ang 4-slide walkthrough guide anumang oras.',
+    viewTutorialBtn: 'View Tutorial',
     vibCardTitle: 'Mga Vibration Alert',
     testVibration: 'Subukan (Test)',
     vibMasterTitle: 'I-on ang Vibration Alerts',
@@ -326,6 +378,52 @@ export const I18N = {
     toastOcrNoText: 'Walang mabasang teksto sa larawan. Subukan ang mas malinaw na larawan o I-paste ang Teksto.',
     toastImageDecodeError: 'Hindi mabuksan ang napiling larawan. Pumili ng ibang larawan.',
     toastExitBrowser: 'Isara ang browser tab na ito para lumabas sa preview.',
+    walkthrough: {
+      headerTitle: 'Welcome sa JW Timer',
+      skip: 'Laktawan',
+      back: 'Bumalik',
+      next: 'Susunod',
+      getStarted: 'Simulan Na',
+      stepLabel: (idx, total) => `Hakbang ${idx} ng ${total}`,
+      slides: [
+        {
+          title: 'I-import ang Schedule sa Ilang Segundo',
+          desc: 'Gumawa ng schedule 100% offline — i-scan ang Midweek S-140 / KHS screenshot, mag-paste ng text, o gumawa ng manual Weekend schedule.',
+          tips: [
+            { label: 'Upload Image', detail: 'I-upload lang ang screenshot ng S-140 schedule para ma-scan offline.' },
+            { label: 'Paste Text', detail: 'I-paste ang teksto para mabilis ma-fill out ang mga bahagi.' },
+            { label: 'Weekend Tab', detail: 'Gumawa ng manual Public Talk & Watchtower Study schedule.' },
+          ],
+        },
+        {
+          title: 'Full-Screen Editor & Smooth Drag-and-Drop',
+          desc: 'I-customize ang bawat bahagi, pangalan ng speaker, at takdang minuto sa full-screen editor.',
+          tips: [
+            { label: 'I-edit Kahit Kailan', detail: 'Pindutin ang Edit sa schedule card o sa Timer tab.' },
+            { label: 'Hold & Drag ⋮⋮', detail: 'I-press and hold ang ⋮⋮ grip para i-drag at ayusin ang pagkakasunod.' },
+            { label: 'Section Colors', detail: 'May kulay bawat seksiyon para madaling makita ang daloy ng pulong.' },
+          ],
+        },
+        {
+          title: 'Live Stage & Timing Controls',
+          desc: 'Mag-time nang kampante habang pulong gamit ang malalaking buttons at tahimik na vibration alerts.',
+          tips: [
+            { label: 'Start / Next Part', detail: 'I-start, i-pause, o lumipat sa susunod na bahagi sa 1 tap.' },
+            { label: '-30s / +30s & -1m / +1m', detail: 'Pang-adjust agad kung late o maaga na-click, o kung nagbago ang target.' },
+            { label: 'Vibration Alerts', detail: 'May tahimik na signal sa 1:00, 0:30, at 0:00 (pwedeng i-adjust sa Settings).' },
+          ],
+        },
+        {
+          title: 'Auto-Float sa JW Library & Overtime Report',
+          desc: 'Tuloy ang pagtingin sa oras kahit lumipat ka sa JW Library, at madaling i-share ang report pagkatapos.',
+          tips: [
+            { label: 'Auto-Float Pill', detail: 'Nag-a-auto-float ang timer pill kapag nag-switch ka sa JW Library (basta naka-allow ang "Display over other apps").' },
+            { label: '1-Tap Balik', detail: 'I-tap lang ang floating pill para bumalik agad sa JW Timer.' },
+            { label: 'Overtime Report', detail: 'I-copy ang overtime report para sa Viber or Messenger sa 1 tap.' },
+          ],
+        },
+      ],
+    },
   },
 };
 

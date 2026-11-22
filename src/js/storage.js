@@ -1,9 +1,10 @@
 const WEEKS_STORAGE_KEY = 'km_weeks_v1';
 const ACTIVE_WEEK_KEY = 'km_active_week_id_v1';
 const SETTINGS_STORAGE_KEY = 'km_settings_v1';
+const TUTORIAL_SEEN_KEY = 'km_tutorial_seen_v1';
 
 export const DEFAULT_SETTINGS = {
-  language: 'tl',
+  language: 'en',
   theme: 'midnight',
   keepAwake: true,
   autoFloatOnLeave: true,
@@ -19,7 +20,7 @@ export const DEFAULT_SETTINGS = {
   },
 };
 
-export function createDefaultMidweekParts(lang = 'tl') {
+export function createDefaultMidweekParts(lang = 'en') {
   const isTl = lang === 'tl';
   return [
     {
@@ -145,7 +146,7 @@ export function createDefaultMidweekParts(lang = 'tl') {
   ];
 }
 
-export function createDefaultWeekendParts(lang = 'tl') {
+export function createDefaultWeekendParts(lang = 'en') {
   const isTl = lang === 'tl';
   return [
     {
@@ -285,7 +286,7 @@ export function inferSectionFromTitle(title) {
 
 export function createWeekObject(
   { weekLabel, congregationName = 'Kingdom Hall', chairman = '', parts = [], meetingType = 'midweek' },
-  lang = 'tl'
+  lang = 'en'
 ) {
   const normalizedType = meetingType === 'weekend' ? 'weekend' : 'midweek';
   const defaultParts =
@@ -324,7 +325,7 @@ export function loadSettings() {
     const legacyTheme = localStorage.getItem('km_offline_theme_setting');
     return {
       ...DEFAULT_SETTINGS,
-      language: legacyLang === 'en' ? 'en' : 'tl',
+      language: legacyLang === 'tl' ? 'tl' : DEFAULT_SETTINGS.language,
       theme: legacyTheme === 'light' ? 'light' : 'midnight',
     };
   } catch {
@@ -340,7 +341,7 @@ export function saveSettings(settings) {
   }
 }
 
-export function loadWeeks(lang = 'tl') {
+export function loadWeeks(lang = 'en') {
   try {
     const raw = localStorage.getItem(WEEKS_STORAGE_KEY);
     if (raw !== null) {
@@ -393,18 +394,7 @@ export function loadWeeks(lang = 'tl') {
     console.warn('Load weeks fallback:', err);
   }
 
-  const starter = createWeekObject(
-    {
-      meetingType: 'midweek',
-      weekLabel: 'December 4, 2026',
-      congregationName: 'Kingdom Hall',
-      chairman: '',
-      parts: createDefaultMidweekParts(lang),
-    },
-    lang
-  );
-  saveWeeks([starter], starter.id);
-  return [starter];
+  return [];
 }
 
 export function loadActiveWeekId(weeks) {
@@ -428,5 +418,21 @@ export function saveWeeks(weeks, activeWeekId) {
     }
   } catch (err) {
     console.warn('Failed to save weeks:', err);
+  }
+}
+
+export function hasSeenTutorial() {
+  try {
+    return localStorage.getItem(TUTORIAL_SEEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function markTutorialSeen() {
+  try {
+    localStorage.setItem(TUTORIAL_SEEN_KEY, '1');
+  } catch {
+    // ignore
   }
 }

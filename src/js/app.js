@@ -10,9 +10,11 @@ import {
   createDefaultWeekendParts,
   createWeekObject,
   generateId,
+  hasSeenTutorial,
   loadActiveWeekId,
   loadSettings,
   loadWeeks,
+  markTutorialSeen,
   normalizePart,
   saveSettings,
   saveWeeks,
@@ -47,6 +49,14 @@ let ocrSourceTarget = 'new-week';
 let autofillSourceTarget = 'new-week';
 let pendingDeleteWeekId = null;
 let toastTimer = null;
+let walkthroughSlideIndex = 0;
+
+const WALKTHROUGH_SLIDE_ICONS = [
+  '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>',
+  '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/></svg>',
+  '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/><path d="M10 2h4"/></svg>',
+  '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="10" x="5" y="4" rx="2"/><path d="M8 20h8"/><path d="M12 14v6"/></svg>',
+];
 
 const $ = (id) => document.getElementById(id);
 
@@ -234,6 +244,9 @@ function applyThemeAndTranslations() {
   $('txt-setting-awake-desc').textContent = dict.settingAwakeDesc;
   $('txt-setting-autofloat-title').textContent = dict.settingAutoFloatTitle;
   $('txt-setting-autofloat-desc').textContent = dict.settingAutoFloatDesc;
+  $('txt-setting-tutorial-title').textContent = dict.settingTutorialTitle;
+  $('txt-setting-tutorial-desc').textContent = dict.settingTutorialDesc;
+  $('txt-view-tutorial').textContent = dict.viewTutorialBtn;
 
   $('txt-vib-card-title').textContent = dict.vibCardTitle;
   $('txt-test-vibration').textContent = dict.testVibration;
@@ -411,7 +424,7 @@ function renderQueueList() {
 
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = `queue-item-btn${idx === currentPartIndex ? ' active' : ''}`;
+    btn.className = `queue-item-btn sec-${p.section}${idx === currentPartIndex ? ' active' : ''}`;
     btn.addEventListener('click', () => {
       const active = getActivePart();
       if (active) timerEngine.pause(active);
@@ -655,11 +668,103 @@ function renderSchedulesGrid() {
   });
 }
 
+function renderWalkthrough() {
+  const dict = t();
+  const wt = dict.walkthrough;
+  if (!wt) return;
+
+  const total = wt.slides.length;
+  walkthroughSlideIndex = Math.max(0, Math.min(total - 1, walkthroughSlideIndex));
+
+  $('txt-walkthrough-title').textContent = wt.headerTitle;
+  $('txt-walkthrough-step').textContent = wt.stepLabel(walkthroughSlideIndex + 1, total);
+  $('txt-tut-skip').textContent = wt.skip;
+  $('txt-tut-back').textContent = wt.back;
+  $('txt-tut-next').textContent = walkthroughSlideIndex === total - 1 ? wt.getStarted : wt.next;
+
+  $('btn-tut-lang-en').classList.toggle('active', settings.language === 'en');
+  $('btn-tut-lang-tl').classList.toggle('active', settings.language !== 'en');
+
+  const backBtn = $('btn-tut-back');
+  if (backBtn) {
+    backBtn.classList.toggle('hidden', walkthroughSlideIndex === 0);
+  }
+
+  const track = $('walkthrough-track');
+  if (track) {
+    if (track.dataset.lang !== settings.language || track.children.length !== total) {
+      track.dataset.lang = settings.language;
+      track.innerHTML = wt.slides
+        .map((slide, idx) => {
+          const tipsHtml = (slide.tips || [])
+            .map(
+              (tip) => `
+              <div class="walkthrough-tip-row">
+                <span class="walkthrough-tip-label">${escapeHtml(tip.label)}</span>
+                <span class="walkthrough-tip-detail">${escapeHtml(tip.detail)}</span>
+              </div>`
+            )
+            .join('');
+          return `
+            <div class="walkthrough-slide" role="tabpanel" aria-hidden="${idx !== walkthroughSlideIndex}">
+              <div class="walkthrough-hero-icon" aria-hidden="true">${WALKTHROUGH_SLIDE_ICONS[idx] || ''}</div>
+              <h4 class="walkthrough-slide-title">${escapeHtml(slide.title)}</h4>
+              <p class="walkthrough-slide-desc">${escapeHtml(slide.desc)}</p>
+              <div class="walkthrough-tips">${tipsHtml}</div>
+            </div>`;
+        })
+        .join('');
+    } else {
+      Array.from(track.children).forEach((slideEl, idx) => {
+        slideEl.setAttribute('aria-hidden', String(idx !== walkthroughSlideIndex));
+      });
+    }
+    track.style.transform = `translate3d(-${walkthroughSlideIndex * 100}%, 0, 0)`;
+  }
+
+  const viewport = $('walkthrough-viewport');
+  if (viewport) {
+    viewport.scrollTop = 0;
+  }
+
+  const dots = $('walkthrough-dots');
+  if (dots) {
+    dots.innerHTML = '';
+    for (let i = 0; i < total; i++) {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = `walkthrough-dot${i === walkthroughSlideIndex ? ' active' : ''}`;
+      dot.setAttribute('role', 'tab');
+      dot.setAttribute('aria-selected', String(i === walkthroughSlideIndex));
+      dot.setAttribute('aria-label', wt.stepLabel(i + 1, total));
+      dot.addEventListener('click', () => {
+        walkthroughSlideIndex = i;
+        renderWalkthrough();
+      });
+      dots.appendChild(dot);
+    }
+  }
+}
+
+function openWalkthroughModal(startAtZero = true) {
+  if (startAtZero) walkthroughSlideIndex = 0;
+  renderWalkthrough();
+  $('modal-walkthrough')?.classList.add('open');
+}
+
+function closeWalkthroughModal(shouldMarkSeen = true) {
+  if (shouldMarkSeen) markTutorialSeen();
+  $('modal-walkthrough')?.classList.remove('open');
+}
+
 function renderAll() {
   applyThemeAndTranslations();
   renderTimerStage();
   renderQueueList();
   renderSchedulesGrid();
+  if ($('modal-walkthrough')?.classList.contains('open')) {
+    renderWalkthrough();
+  }
 }
 
 /* =========================================================
@@ -738,6 +843,10 @@ function handleAndroidBackButton() {
   }
   if ($('modal-confirm-delete')?.classList.contains('open')) {
     closeDeleteConfirmModal();
+    return;
+  }
+  if ($('modal-walkthrough')?.classList.contains('open')) {
+    closeWalkthroughModal(true);
     return;
   }
   if ($('modal-summary')?.classList.contains('open')) {
@@ -1058,7 +1167,7 @@ function renderEditorPartRows() {
     const showAssistant = p.section === 'ministry' && !isBibleReadingPart(p);
 
     const card = document.createElement('div');
-    card.className = 'editor-part-card';
+    card.className = `editor-part-card sec-${p.section}`;
 
     card.innerHTML = `
       <div class="editor-row-1">
@@ -1534,11 +1643,13 @@ function bindEvents() {
   // Text Auto-Fill Modal (supports Schedules new week AND Editor inline replacement)
   $('btn-open-text-autofill').addEventListener('click', () => {
     autofillSourceTarget = 'new-week';
+    $('autofill-textarea').value = '';
     updateTextAutofillPreview();
     $('modal-text-autofill').classList.add('open');
   });
   $('btn-editor-paste-text').addEventListener('click', () => {
     autofillSourceTarget = 'replace-editor';
+    $('autofill-textarea').value = '';
     updateTextAutofillPreview();
     $('modal-text-autofill').classList.add('open');
   });
@@ -1713,6 +1824,105 @@ Tagabasa sa Pag-aaral: Brother Tan`;
     }
   });
 
+  // Settings Tab Tutorial Replay + Walkthrough Modal Controls
+  $('btn-view-tutorial').addEventListener('click', () => openWalkthroughModal(true));
+  $('btn-tut-lang-en').addEventListener('click', () => {
+    settings.language = 'en';
+    saveSettings(settings);
+    renderAll();
+  });
+  $('btn-tut-lang-tl').addEventListener('click', () => {
+    settings.language = 'tl';
+    saveSettings(settings);
+    renderAll();
+  });
+  $('btn-tut-skip').addEventListener('click', () => closeWalkthroughModal(true));
+  $('btn-tut-back').addEventListener('click', () => {
+    if (walkthroughSlideIndex > 0) {
+      walkthroughSlideIndex -= 1;
+      renderWalkthrough();
+    }
+  });
+  $('btn-tut-next').addEventListener('click', () => {
+    const total = t().walkthrough?.slides?.length || 4;
+    if (walkthroughSlideIndex < total - 1) {
+      walkthroughSlideIndex += 1;
+      renderWalkthrough();
+    } else {
+      closeWalkthroughModal(true);
+    }
+  });
+  $('modal-walkthrough').addEventListener('click', (e) => {
+    if (e.target === $('modal-walkthrough')) closeWalkthroughModal(true);
+  });
+
+  // Swipe gestures inside Walkthrough viewport
+  const wtViewport = $('walkthrough-viewport');
+  const wtTrack = $('walkthrough-track');
+  if (wtViewport && wtTrack) {
+    let swipeStartX = 0;
+    let swipeStartY = 0;
+    let swipeDeltaX = 0;
+    let isSwiping = false;
+    let swipePointerId = null;
+
+    wtViewport.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      swipeStartX = e.clientX;
+      swipeStartY = e.clientY;
+      swipeDeltaX = 0;
+      isSwiping = false;
+      swipePointerId = e.pointerId;
+    });
+
+    wtViewport.addEventListener('pointermove', (e) => {
+      if (swipePointerId !== e.pointerId) return;
+      const dx = e.clientX - swipeStartX;
+      const dy = e.clientY - swipeStartY;
+
+      if (!isSwiping) {
+        if (Math.abs(dx) > 12 && Math.abs(dx) > Math.abs(dy)) {
+          isSwiping = true;
+          wtTrack.classList.add('is-swiping');
+        } else if (Math.abs(dy) > 16) {
+          swipePointerId = null;
+          return;
+        }
+      }
+
+      if (isSwiping) {
+        swipeDeltaX = dx;
+        const basePct = -(walkthroughSlideIndex * 100);
+        wtTrack.style.transform = `translate3d(calc(${basePct}% + ${swipeDeltaX}px), 0, 0)`;
+      }
+    });
+
+    const finishSwipe = (e) => {
+      if (swipePointerId !== e.pointerId) return;
+      const wasSwiping = isSwiping;
+      const dx = swipeDeltaX;
+      swipePointerId = null;
+      isSwiping = false;
+      wtTrack.classList.remove('is-swiping');
+
+      if (!wasSwiping) return;
+
+      const total = t().walkthrough?.slides?.length || 4;
+      if (dx < -45 && walkthroughSlideIndex < total - 1) {
+        walkthroughSlideIndex += 1;
+        renderWalkthrough();
+      } else if (dx > 45 && walkthroughSlideIndex > 0) {
+        walkthroughSlideIndex -= 1;
+        renderWalkthrough();
+      } else {
+        wtTrack.style.transform = `translate3d(-${walkthroughSlideIndex * 100}%, 0, 0)`;
+      }
+    };
+
+    wtViewport.addEventListener('pointerup', finishSwipe);
+    wtViewport.addEventListener('pointercancel', finishSwipe);
+  }
+
   // WebView visibilitychange fallback for Auto-Float & timer sync
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
@@ -1726,3 +1936,6 @@ Tagabasa sa Pag-aaral: Brother Tan`;
 bindEvents();
 setKeepScreenAwake(settings.keepAwake);
 renderAll();
+if (!hasSeenTutorial()) {
+  openWalkthroughModal(true);
+}

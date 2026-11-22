@@ -24,12 +24,13 @@
     <!-- Compact Sticky Top App Bar -->
     <header class="app-header">
       <div class="header-inner">
-        <div class="brand-lockup">
+        <div class="brand-identity">
           <div class="brand-mark">JW</div>
-          <span class="brand-title" id="header-app-title">JW Timer</span>
+          <div class="brand-lockup">
+            <span class="brand-title" id="header-app-title">JW Timer</span>
+            <span class="header-week-meta" id="header-week-meta"></span>
+          </div>
         </div>
-
-        <span class="header-week-meta" id="header-week-meta"></span>
 
         <div class="header-actions">
           <button type="button" class="btn btn-compact btn-ghost" id="btn-header-summary">
@@ -251,6 +252,16 @@
                 <span class="toggle-slider"></span>
               </label>
             </div>
+
+            <div class="setting-row">
+              <div>
+                <div class="setting-title" id="txt-setting-tutorial-title">How to Use JW Timer</div>
+                <div class="setting-desc" id="txt-setting-tutorial-desc">View the 4-slide interactive walkthrough guide anytime.</div>
+              </div>
+              <button type="button" class="btn btn-compact btn-secondary" id="btn-view-tutorial">
+                <span id="txt-view-tutorial">View Tutorial</span>
+              </button>
+            </div>
           </div>
 
           <!-- Comprehensive Vibration Settings Card -->
@@ -362,23 +373,26 @@
     <!-- FULL-SCREEN SCHEDULE EDITOR WITH TOUCH DRAG-AND-DROP -->
     <div class="fullscreen-editor" id="drawer-week-editor" role="dialog" aria-modal="true" aria-labelledby="txt-editor-drawer-title">
       <div class="fullscreen-editor-header">
-        <button type="button" class="btn btn-compact btn-ghost" id="btn-cancel-editor-drawer">
-          <span id="txt-cancel-editor">Cancel</span>
-        </button>
+        <div class="editor-header-nav">
+          <button type="button" class="btn btn-compact btn-ghost" id="btn-cancel-editor-drawer">
+            <span id="txt-cancel-editor">Cancel</span>
+          </button>
 
-        <h3 class="fullscreen-editor-title" id="txt-editor-drawer-title">Edit Schedule</h3>
+          <h3 class="fullscreen-editor-title" id="txt-editor-drawer-title">Edit Schedule</h3>
 
-        <div class="fullscreen-editor-actions">
+          <button type="button" class="btn btn-compact btn-primary" id="btn-save-editor-drawer">
+            <span id="txt-save-editor">Save</span>
+          </button>
+        </div>
+
+        <div class="editor-header-subbar">
           <button type="button" class="btn btn-compact btn-secondary btn-icon-label" id="btn-editor-scan-image" title="Scan Image">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
-            <span class="hide-xs" id="txt-editor-scan-btn"></span>
+            <span id="txt-editor-scan-btn">Scan Image</span>
           </button>
           <button type="button" class="btn btn-compact btn-secondary btn-icon-label" id="btn-editor-paste-text" title="Paste Text">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
-            <span class="hide-xs" id="txt-editor-paste-btn"></span>
-          </button>
-          <button type="button" class="btn btn-compact btn-primary" id="btn-save-editor-drawer">
-            <span id="txt-save-editor">Save</span>
+            <span id="txt-editor-paste-btn">Paste Text</span>
           </button>
         </div>
       </div>
@@ -556,6 +570,43 @@
           <button type="button" class="btn btn-danger" id="btn-accept-confirm-exit">
             <span id="txt-exit-leave">Exit App</span>
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4-SLIDE INTERACTIVE WELCOME WALKTHROUGH MODAL -->
+    <div class="sheet-backdrop dialog-center" id="modal-walkthrough">
+      <div class="sheet-panel walkthrough-panel" role="dialog" aria-modal="true" aria-labelledby="txt-walkthrough-title">
+        <div class="walkthrough-header">
+          <div class="walkthrough-title-group">
+            <h3 class="section-heading" style="font-size:16px;" id="txt-walkthrough-title">Welcome to JW Timer</h3>
+            <span class="walkthrough-step-counter" id="txt-walkthrough-step">Step 1 of 4</span>
+          </div>
+          <div class="segmented-control walkthrough-lang-toggle" role="group" aria-label="Language">
+            <button type="button" class="segmented-btn" id="btn-tut-lang-en">English</button>
+            <button type="button" class="segmented-btn" id="btn-tut-lang-tl">Tagalog</button>
+          </div>
+        </div>
+
+        <div class="walkthrough-viewport" id="walkthrough-viewport">
+          <div class="walkthrough-track" id="walkthrough-track"></div>
+        </div>
+
+        <div class="walkthrough-footer">
+          <div class="walkthrough-dots" id="walkthrough-dots" role="tablist" aria-label="Walkthrough steps"></div>
+          <div class="walkthrough-nav-row">
+            <button type="button" class="btn btn-compact btn-ghost" id="btn-tut-skip">
+              <span id="txt-tut-skip">Skip</span>
+            </button>
+            <div class="walkthrough-nav-right">
+              <button type="button" class="btn btn-compact btn-secondary" id="btn-tut-back">
+                <span id="txt-tut-back">Back</span>
+              </button>
+              <button type="button" class="btn btn-compact btn-primary" id="btn-tut-next">
+                <span id="txt-tut-next">Next</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>

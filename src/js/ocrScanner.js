@@ -258,6 +258,111 @@ function normalizeRoleLabel(label) {
   return 'Speaker';
 }
 
+/* =========================================================
+   OCR PERSON NAME SANITIZER & AUTO-CAPITALIZER
+   ========================================================= */
+function formatPersonToken(token, forceTitleCase) {
+  if (!token) return '';
+
+  // Canonicalize Jr. / Sr.
+  if (/^jr\.?$/i.test(token)) return 'Jr.';
+  if (/^sr\.?$/i.test(token)) return 'Sr.';
+
+  // Canonicalize common Roman numeral suffixes (II, III, IV)
+  if (/^(?:ii|iii|iv)$/i.test(token)) {
+    return token.toUpperCase();
+  }
+
+  // Preserve dotted single-letter initials (e.g., A., J.) as uppercase
+  if (/^[A-Za-zÀ-ÿ]\.$/.test(token)) {
+    return token.toUpperCase();
+  }
+
+  const lettersOnly = token.replace(/[^A-Za-zÀ-ÿ]/g, '');
+  const isTokenAllCaps =
+    lettersOnly.length >= 2 && lettersOnly === lettersOnly.toUpperCase();
+
+  if (!forceTitleCase && !isTokenAllCaps) {
+    return token;
+  }
+
+  // Title-case sub-parts split by hyphens or apostrophes (e.g., DELA-CRUZ -> Dela-Cruz, O'CONNOR -> O'Connor)
+  return token
+    .split(/([-'])/)
+    .map((segment) => {
+      if (segment === '-' || segment === "'") return segment;
+      if (!segment) return '';
+      return segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase();
+    })
+    .join('');
+}
+
+export function cleanPersonName(rawName) {
+  let clean = String(rawName || '')
+    // Strip box-drawing, table border, and common OCR symbol noise
+    .replace(/[|¦[\]{}_~•*=<>°¬\u2500-\u259F]+/g, ' ')
+    // Collapse whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!clean) return '';
+
+  // Trim stray leading/trailing colons, dashes, slashes, quotes, commas, semicolons, and excess punctuation
+  clean = clean
+    .replace(/^[\s:;\-–—/\\"'“”‘’`.,!?·]+/, '')
+    .replace(/[\s:;\-–—/\\"'“”‘’`,!?·]+$/, '')
+    // Collapse multiple trailing dots (e.g., "Cruz.." -> "Cruz.")
+    .replace(/\.{2,}$/, '.')
+    .trim();
+
+  if (!clean) return '';
+
+  const tokens = clean.split(' ').filter(Boolean);
+
+  // Remove stray leading single-character OCR artifacts (without period, e.g., "x Juan Cruz", "1 Pedro")
+  while (tokens.length > 1 && /^[A-Za-z0-9]$/.test(tokens[0])) {
+    tokens.shift();
+  }
+
+  // Remove stray trailing single-character OCR artifacts (preserving dotted initials like "A." and suffixes like "II", "III", "IV", "Jr.", "Sr.")
+  while (tokens.length > 1 && /^[A-Za-z0-9]$/.test(tokens[tokens.length - 1])) {
+    tokens.pop();
+  }
+
+  // Also strip isolated punctuation-only tokens at boundaries
+  while (tokens.length > 0 && /^[^A-Za-zÀ-ÿ0-9]+$/.test(tokens[0])) {
+    tokens.shift();
+  }
+  while (tokens.length > 0 && /^[^A-Za-zÀ-ÿ0-9]+$/.test(tokens[tokens.length - 1])) {
+    tokens.pop();
+  }
+
+  clean = tokens.join(' ').trim();
+  if (!clean) return '';
+
+  // If the entire extracted name (excluding suffixes/initials) is ALL-CAPS, normalize to Title Case
+  const allLetters = clean.replace(/[^A-Za-zÀ-ÿ]/g, '');
+  const forceTitleCase =
+    allLetters.length >= 2 && allLetters === allLetters.toUpperCase();
+
+  const normalized = clean
+    .split(' ')
+    .map((tok) => formatPersonToken(tok, forceTitleCase))
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
+  // Strip stray trailing period unless it belongs to Jr., Sr., or a single-letter initial (e.g., "A.")
+  if (
+    normalized.endsWith('.') &&
+    !/(?:^|\s)(?:Jr|Sr|[A-Za-zÀ-ÿ])\.$/i.test(normalized)
+  ) {
+    return normalized.replace(/\.+$/, '').trim();
+  }
+
+  return normalized;
+}
+
 function extractRoleSegments(rawText) {
   const clean = (rawText || '').replace(/\s+/g, ' ').trim();
   if (!clean) return [];
@@ -296,10 +401,11 @@ function extractRoleSegments(rawText) {
     const cur = allMarkers[i];
     const next = allMarkers[i + 1];
     const end = next ? next.startIndex : clean.length;
-    const val = clean
+    const rawVal = clean
       .slice(cur.valueStart, end)
       .replace(/^[\s/|&-]+|[\s/|&-]+$/g, '')
       .trim();
+    const val = cur.role !== '__DROP_READER__' ? cleanPersonName(rawVal) : '';
     if (cur.role !== '__DROP_READER__' && val) {
       const sanitized = sanitizeRoleValue(`${cur.role}: ${val}`);
       if (sanitized) {
@@ -349,31 +455,36 @@ function parseRoleNames(rawNames, section, title) {
 
   // Fallback when no explicit role labels appeared in right column
   if (isCbs) {
-    const primary = clean.includes('/') ? clean.split('/')[0].trim() : clean;
+    const primary = cleanPersonName(clean.includes('/') ? clean.split('/')[0] : clean);
     return { speaker: sanitizeRoleValue(primary ? `CBS Conductor: ${primary}` : ''), assistant: '' };
   }
 
   if (bibleReading) {
-    const readerOnly = clean.includes('/') ? clean.split('/')[0].trim() : clean;
+    const readerOnly = cleanPersonName(clean.includes('/') ? clean.split('/')[0] : clean);
     return { speaker: sanitizeRoleValue(readerOnly ? `Bible Reader: ${readerOnly}` : ''), assistant: '' };
   }
 
   if (section === 'opening' || section === 'concluding') {
-    return { speaker: sanitizeRoleValue(`Chairman: ${clean}`), assistant: '' };
+    const chairName = cleanPersonName(clean);
+    return { speaker: sanitizeRoleValue(chairName ? `Chairman: ${chairName}` : ''), assistant: '' };
   }
 
   if (section === 'ministry') {
     const delim = clean.match(/^(.+?)\s*(?:\/|&|\|)\s*(.+)$/);
     if (delim) {
+      const studentName = cleanPersonName(delim[1]);
+      const assistantName = cleanPersonName(delim[2]);
       return {
-        speaker: sanitizeRoleValue(`Student: ${delim[1].trim()}`),
-        assistant: sanitizeRoleValue(`Assistant: ${delim[2].trim()}`),
+        speaker: sanitizeRoleValue(studentName ? `Student: ${studentName}` : ''),
+        assistant: sanitizeRoleValue(assistantName ? `Assistant: ${assistantName}` : ''),
       };
     }
-    return { speaker: sanitizeRoleValue(`Student: ${clean}`), assistant: '' };
+    const studentName = cleanPersonName(clean);
+    return { speaker: sanitizeRoleValue(studentName ? `Student: ${studentName}` : ''), assistant: '' };
   }
 
-  return { speaker: sanitizeRoleValue(`Speaker: ${clean}`), assistant: '' };
+  const speakerName = cleanPersonName(clean);
+  return { speaker: sanitizeRoleValue(speakerName ? `Speaker: ${speakerName}` : ''), assistant: '' };
 }
 
 function mergeStackedRightText(existingSpeaker, existingAssistant, extraRightText, section, title) {
@@ -400,7 +511,9 @@ function mergeStackedRightText(existingSpeaker, existingAssistant, extraRightTex
     !/student\s*speaker/i.test(speaker)
   ) {
     // Second stacked line under a Ministry part without "Assistant:" keyword can be the assistant
-    const cleanVal = parsed.speaker.replace(/^(?:Student(?:\s*\d+)?|Speaker(?:\s*\d+)?)\s*:\s*/i, '').trim();
+    const cleanVal = cleanPersonName(
+      parsed.speaker.replace(/^(?:Student(?:\s*\d+)?|Speaker(?:\s*\d+)?)\s*:\s*/i, '')
+    );
     if (cleanVal) {
       assistant = sanitizeRoleValue(`Assistant: ${cleanVal}`);
     }
@@ -435,7 +548,8 @@ function extractMetadataFromText(fullText) {
     if (!chairman) {
       const chMatch = line.match(/(?:chairman|tagapangulo)\s*[:\-]\s*(.+)$/i);
       if (chMatch) {
-        const cleaned = sanitizeRoleValue(`Chairman: ${chMatch[1].trim()}`);
+        const cleanChair = cleanPersonName(chMatch[1]);
+        const cleaned = sanitizeRoleValue(cleanChair ? `Chairman: ${cleanChair}` : '');
         if (cleaned) chairman = cleaned;
       }
     }
@@ -548,7 +662,8 @@ function parseS140ThreeColumn(data) {
 
     const chMatch = rowText.match(/(?:chairman|tagapangulo)\s*[:\-]\s*(.+)/i);
     if (chMatch && !extractedChairman) {
-      const cleanChair = sanitizeRoleValue(`Chairman: ${chMatch[1].trim()}`);
+      const cleanedName = cleanPersonName(chMatch[1]);
+      const cleanChair = sanitizeRoleValue(cleanedName ? `Chairman: ${cleanedName}` : '');
       if (cleanChair) extractedChairman = cleanChair;
     }
 
@@ -684,7 +799,8 @@ function parsePlanBRegex(fullText) {
 
     const chMatch = line.match(/^(?:chairman|tagapangulo)\s*[:\-]\s*(.+)$/i);
     if (chMatch && !extractedChairman) {
-      const cleanChair = sanitizeRoleValue(`Chairman: ${chMatch[1].trim()}`);
+      const cleanedName = cleanPersonName(chMatch[1]);
+      const cleanChair = sanitizeRoleValue(cleanedName ? `Chairman: ${cleanedName}` : '');
       if (cleanChair) extractedChairman = cleanChair;
       continue;
     }
@@ -805,7 +921,7 @@ export async function scanScheduleImageOffline(imageFile, onProgress, statusLabe
     return {
       modeUsed: '3-column',
       weekLabel: meta.weekLabel || 'December 4, 2026',
-      chairman: (primary.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, ''),
+      chairman: cleanPersonName((primary.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, '')),
       parts: primary.parts,
       rawText: fullText,
     };
@@ -820,7 +936,7 @@ export async function scanScheduleImageOffline(imageFile, onProgress, statusLabe
   return {
     modeUsed: 'plan-b',
     weekLabel: meta.weekLabel || 'December 4, 2026',
-    chairman: (planB.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, ''),
+    chairman: cleanPersonName((planB.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, '')),
     parts: planB.parts,
     rawText: fullText,
   };
@@ -863,17 +979,17 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
       continue;
     }
     if (upper.startsWith('CHAIRMAN:') || upper.startsWith('TAGAPANGULO:')) {
-      result.chairman = line.replace(/^(CHAIRMAN:|TAGAPANGULO:)/i, '').trim();
+      result.chairman = cleanPersonName(line.replace(/^(CHAIRMAN:|TAGAPANGULO:)/i, ''));
       continue;
     }
     if (/^(PAMBUNGAD NA KOMENTO:|OPENING COMMENTS:|OPENING:|PAMBUNGAD:)/i.test(line)) {
-      result.openingSpeaker = line.replace(/^(PAMBUNGAD NA KOMENTO:|OPENING COMMENTS:|OPENING:|PAMBUNGAD:)/i, '').trim();
+      result.openingSpeaker = cleanPersonName(line.replace(/^(PAMBUNGAD NA KOMENTO:|OPENING COMMENTS:|OPENING:|PAMBUNGAD:)/i, ''));
       continue;
     }
     if (/^(PANGWAKAS NA KOMENTO:|CONCLUDING COMMENTS:|CLOSING COMMENTS:|PANGWAKAS:|CLOSING:)/i.test(line)) {
-      result.concludingSpeaker = line
-        .replace(/^(PANGWAKAS NA KOMENTO:|CONCLUDING COMMENTS:|CLOSING COMMENTS:|PANGWAKAS:|CLOSING:)/i, '')
-        .trim();
+      result.concludingSpeaker = cleanPersonName(
+        line.replace(/^(PANGWAKAS NA KOMENTO:|CONCLUDING COMMENTS:|CLOSING COMMENTS:|PANGWAKAS:|CLOSING:)/i, '')
+      );
       continue;
     }
 
@@ -892,13 +1008,13 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
 
     if (currentSection === 'meta' || currentSection === 'treasures') {
       if (/^(SPEAKER(?:\s*\d+)?:|TAGAPAGSALITA(?:\s*\d+)?:|PAHAYAG:)/i.test(line)) {
-        const val = line.replace(/^(SPEAKER(?:\s*\d+)?:|TAGAPAGSALITA(?:\s*\d+)?:|PAHAYAG:)/i, '').trim();
+        const val = cleanPersonName(line.replace(/^(SPEAKER(?:\s*\d+)?:|TAGAPAGSALITA(?:\s*\d+)?:|PAHAYAG:)/i, ''));
         if (val) result.treasures.speaker = sanitizeRoleValue(`Speaker: ${val}`);
       } else if (/^(GEMS CONDUCTOR:|GEMS:|ESPIRITUWAL NA HIYAS:)/i.test(line)) {
-        const val = line.replace(/^(GEMS CONDUCTOR:|GEMS:|ESPIRITUWAL NA HIYAS:)/i, '').trim();
+        const val = cleanPersonName(line.replace(/^(GEMS CONDUCTOR:|GEMS:|ESPIRITUWAL NA HIYAS:)/i, ''));
         if (val) result.treasures.gemsConductor = sanitizeRoleValue(`Gems Conductor: ${val}`);
       } else if (/^(BIBLE READER:|READER:|PAGBABASA SA BIBLIYA:)/i.test(line)) {
-        const val = line.replace(/^(BIBLE READER:|READER:|PAGBABASA SA BIBLIYA:)/i, '').trim();
+        const val = cleanPersonName(line.replace(/^(BIBLE READER:|READER:|PAGBABASA SA BIBLIYA:)/i, ''));
         if (val) result.treasures.bibleReader = sanitizeRoleValue(`Bible Reader: ${val}`);
       }
     } else if (currentSection === 'ministry') {
@@ -912,14 +1028,14 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
         };
         result.ministryParts.push(currentMinistryPart);
       } else if (/^(STUDENT\s*SPEAKER:)/i.test(line)) {
-        const val = line.replace(/^STUDENT\s*SPEAKER:/i, '').trim();
+        const val = cleanPersonName(line.replace(/^STUDENT\s*SPEAKER:/i, ''));
         if (currentMinistryPart && val) {
           currentMinistryPart.student = sanitizeRoleValue(`Student Speaker: ${val}`);
           currentMinistryPart.isTalk = true;
         }
       } else if (/^(STUDENT(?:\s*\d+)?|ESTUDYANTE(?:\s*\d+)?):/i.test(line)) {
         const num = line.match(/\d+/);
-        const val = line.replace(/^(STUDENT(?:\s*\d+)?|ESTUDYANTE(?:\s*\d+)?):/i, '').trim();
+        const val = cleanPersonName(line.replace(/^(STUDENT(?:\s*\d+)?|ESTUDYANTE(?:\s*\d+)?):/i, ''));
         const roleLabel = num ? `Student ${num[0]}` : `Student ${result.ministryParts.length || 1}`;
         if (!currentMinistryPart) {
           currentMinistryPart = {
@@ -934,13 +1050,13 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
         }
       } else if (/^(ASSISTANT(?:\s*\d+)?|KATULONG(?:\s*\d+)?):/i.test(line)) {
         const num = line.match(/\d+/);
-        const val = line.replace(/^(ASSISTANT(?:\s*\d+)?|KATULONG(?:\s*\d+)?):/i, '').trim();
+        const val = cleanPersonName(line.replace(/^(ASSISTANT(?:\s*\d+)?|KATULONG(?:\s*\d+)?):/i, ''));
         const roleLabel = num ? `Assistant ${num[0]}` : `Assistant ${result.ministryParts.length || 1}`;
         if (currentMinistryPart && val) {
           currentMinistryPart.assistant = sanitizeRoleValue(`${roleLabel}: ${val}`);
         }
       } else if (/^(SPEAKER:|TAGAPAGSALITA:)/i.test(line)) {
-        const val = line.replace(/^(SPEAKER:|TAGAPAGSALITA:)/i, '').trim();
+        const val = cleanPersonName(line.replace(/^(SPEAKER:|TAGAPAGSALITA:)/i, ''));
         if (currentMinistryPart && val) {
           currentMinistryPart.student = sanitizeRoleValue(`Student Speaker: ${val}`);
           currentMinistryPart.isTalk = true;
@@ -948,19 +1064,19 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
       }
     } else if (currentSection === 'living') {
       if (/^(LOKAL NA PANGANGAILANGAN:|LOCAL NEEDS:|LN\s*SPEAKER:)/i.test(line)) {
-        const val = line.replace(/^(LOKAL NA PANGANGAILANGAN:|LOCAL NEEDS:|LN\s*SPEAKER:)/i, '').trim();
+        const val = cleanPersonName(line.replace(/^(LOKAL NA PANGANGAILANGAN:|LOCAL NEEDS:|LN\s*SPEAKER:)/i, ''));
         if (val) result.living.localNeedsSpeaker = sanitizeRoleValue(`LN Speaker: ${val}`);
       } else if (/^(BIBLE STUDY:|PAG-AARAL SA BIBLIYA:|CBS\s*CONDUCTOR:|CONDUCTOR:|KONDYAKTOR:)/i.test(line)) {
-        const val = line
-          .replace(/^(BIBLE STUDY:|PAG-AARAL SA BIBLIYA:|CBS\s*CONDUCTOR:|CONDUCTOR:|KONDYAKTOR:)/i, '')
-          .trim();
+        const val = cleanPersonName(
+          line.replace(/^(BIBLE STUDY:|PAG-AARAL SA BIBLIYA:|CBS\s*CONDUCTOR:|CONDUCTOR:|KONDYAKTOR:)/i, '')
+        );
         if (val) result.living.cbsConductor = sanitizeRoleValue(`CBS Conductor: ${val}`);
       }
     }
   }
 
   const baseParts = createDefaultMidweekParts(lang);
-  const chair = sanitizeRoleValue(result.chairman).replace(/^Chairman:\s*/i, '');
+  const chair = cleanPersonName(sanitizeRoleValue(result.chairman).replace(/^Chairman:\s*/i, ''));
   const openSpk = sanitizeRoleValue(result.openingSpeaker ? `Chairman: ${result.openingSpeaker}` : chair ? `Chairman: ${chair}` : '');
   const closeSpk = sanitizeRoleValue(result.concludingSpeaker ? `Chairman: ${result.concludingSpeaker}` : chair ? `Chairman: ${chair}` : '');
 
