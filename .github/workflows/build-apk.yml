@@ -51,6 +51,7 @@ jobs:
           if [ -d "android-template/res" ]; then
             rm -rf android/app/src/main/res/mipmap-*
             cp -r android-template/res/* android/app/src/main/res/
+            rm -rf android/app/src/main/res/mipmap-anydpi-v26
           fi
           rm -f android/app/src/main/res/drawable*/splash.png
           mkdir -p android/app/src/main/res/drawable
