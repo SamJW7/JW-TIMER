@@ -19,6 +19,7 @@ import {
 } from './storage.js';
 import {
   AndroidOverlayBridge,
+  NativeAppBridge,
   initOverlayListeners,
   setKeepScreenAwake,
   triggerVibrationPattern,
@@ -31,6 +32,7 @@ let settings = loadSettings();
 let weeks = loadWeeks(settings.language);
 let activeWeekId = loadActiveWeekId(weeks);
 let currentPartIndex = 0;
+let currentTab = 'timer';
 let schedulesFilterMode = getActiveWeek()?.meetingType || 'midweek';
 
 let editingWeekId = null;
@@ -43,6 +45,7 @@ let editorDraftMeta = {
 let editorDraftParts = [];
 let ocrSourceTarget = 'new-week';
 let autofillSourceTarget = 'new-week';
+let pendingDeleteWeekId = null;
 let toastTimer = null;
 
 const $ = (id) => document.getElementById(id);
@@ -52,7 +55,7 @@ function t() {
 }
 
 function getActiveWeek() {
-  return weeks.find((w) => w.id === activeWeekId) || weeks[0];
+  return weeks.find((w) => w.id === activeWeekId) || weeks[0] || null;
 }
 
 function getActivePart() {
@@ -69,7 +72,7 @@ function showToast(msg) {
   banner.textContent = msg;
   banner.classList.add('visible');
   if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => banner.classList.remove('visible'), 2600);
+  toastTimer = setTimeout(() => banner.classList.remove('visible'), 2800);
 }
 
 /* =========================================================
@@ -195,6 +198,10 @@ function applyThemeAndTranslations() {
   $('nav-label-schedules').textContent = dict.navSchedules;
   $('nav-label-settings').textContent = dict.navSettings;
 
+  $('txt-timer-empty-title').textContent = dict.timerEmptyTitle;
+  $('txt-timer-empty-desc').textContent = dict.timerEmptyDesc;
+  $('txt-empty-go-schedules').textContent = dict.goToSchedulesBtn;
+
   $('txt-next-part').textContent = dict.nextPart;
   $('txt-prev-part').textContent = dict.previous;
   $('txt-reset-part').textContent = dict.reset;
@@ -273,6 +280,16 @@ function applyThemeAndTranslations() {
   $('txt-close-summary').textContent = dict.close;
   $('txt-copy-plain-report').textContent = dict.copyReport;
 
+  $('txt-confirm-delete-title').textContent = dict.confirmDeleteTitle;
+  $('txt-cancel-delete').textContent = dict.cancel;
+  $('txt-accept-delete').textContent = dict.confirmDeleteBtn;
+
+  $('txt-confirm-exit-title').textContent = dict.confirmExitTitle;
+  $('txt-confirm-exit-msg').textContent = dict.confirmExitMsg;
+  $('exit-running-warning').textContent = dict.confirmExitRunningWarn;
+  $('txt-exit-stay').textContent = dict.confirmExitStayBtn;
+  $('txt-exit-leave').textContent = dict.confirmExitLeaveBtn;
+
   $('btn-lang-en').classList.toggle('active', settings.language === 'en');
   $('btn-lang-tl').classList.toggle('active', settings.language === 'tl');
   $('btn-theme-midnight').classList.toggle('active', settings.theme !== 'light');
@@ -296,7 +313,18 @@ function renderTimerStage() {
   const dict = t();
   const week = getActiveWeek();
   const part = getActivePart();
-  if (!week || !part) return;
+  const emptyCard = $('timer-empty-state');
+  const stageContent = $('timer-stage-content');
+
+  if (!week || !part) {
+    $('header-week-meta').textContent = '';
+    emptyCard?.classList.remove('hidden');
+    stageContent?.classList.add('hidden');
+    return;
+  }
+
+  emptyCard?.classList.add('hidden');
+  stageContent?.classList.remove('hidden');
 
   $('header-week-meta').textContent = `${week.weekLabel}${week.chairman ? ` · ${dict.chairmanPrefix}: ${week.chairman}` : ''}`;
   $('txt-queue-week-label').textContent = `${week.weekLabel}${week.chairman ? ` · ${dict.chairmanPrefix}: ${week.chairman}` : ''}`;
@@ -365,9 +393,11 @@ function renderQueueList() {
   const dict = t();
   const week = getActiveWeek();
   const container = $('timer-parts-queue');
-  if (!week || !container) return;
+  if (!container) return;
 
   container.innerHTML = '';
+  if (!week) return;
+
   let lastSection = '';
 
   week.parts.forEach((p, idx) => {
@@ -431,6 +461,54 @@ function renderQueueList() {
   });
 }
 
+function triggerOcrImagePicker(target) {
+  ocrSourceTarget = target;
+  const input = $('ocr-image-input');
+  if (!input) return;
+  input.value = '';
+  input.click();
+}
+
+function createBlankMidweekWeekAndOpen() {
+  const newWeek = createWeekObject(
+    {
+      meetingType: 'midweek',
+      weekLabel: settings.language === 'tl' ? 'Bagong Linggo' : 'New Schedule Week',
+      congregationName: getActiveWeek()?.congregationName || 'Kingdom Hall',
+      chairman: '',
+      parts: createDefaultMidweekParts(settings.language),
+    },
+    settings.language
+  );
+  weeks.unshift(newWeek);
+  if (!activeWeekId) {
+    activeWeekId = newWeek.id;
+    currentPartIndex = 0;
+  }
+  saveWeeks(weeks, activeWeekId);
+  renderAll();
+  openWeekEditorDrawer(newWeek.id);
+}
+
+function createBlankWeekendWeekAndOpen() {
+  const newWeekend = createWeekObject(
+    {
+      meetingType: 'weekend',
+      weekLabel: settings.language === 'tl' ? 'Dulong Sanlinggo' : 'Weekend Meeting',
+      congregationName: getActiveWeek()?.congregationName || 'Kingdom Hall',
+      chairman: '',
+      parts: createDefaultWeekendParts(settings.language),
+    },
+    settings.language
+  );
+  weeks.unshift(newWeekend);
+  activeWeekId = newWeekend.id;
+  currentPartIndex = 0;
+  saveWeeks(weeks, activeWeekId);
+  renderAll();
+  openWeekEditorDrawer(newWeekend.id);
+}
+
 function renderSchedulesGrid() {
   const dict = t();
   const grid = $('weeks-grid');
@@ -446,10 +524,54 @@ function renderSchedulesGrid() {
 
   if (filteredWeeks.length === 0) {
     const empty = document.createElement('div');
-    empty.className = 'surface-card';
-    empty.innerHTML = `<p class="section-subtitle">${
-      schedulesFilterMode === 'weekend' ? dict.newWeekendWeekBtn : dict.newBlankWeekBtn
-    }</p>`;
+    empty.className = 'surface-card empty-state-card';
+
+    const iconWrap = document.createElement('div');
+    iconWrap.className = 'empty-state-icon';
+    iconWrap.setAttribute('aria-hidden', 'true');
+    iconWrap.innerHTML = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>`;
+
+    const titleEl = document.createElement('h3');
+    titleEl.className = 'empty-state-title';
+    titleEl.textContent =
+      schedulesFilterMode === 'weekend' ? dict.schedEmptyTitleWeekend : dict.schedEmptyTitleMidweek;
+
+    const descEl = document.createElement('p');
+    descEl.className = 'empty-state-desc';
+    descEl.textContent =
+      schedulesFilterMode === 'weekend' ? dict.schedEmptyDescWeekend : dict.schedEmptyDescMidweek;
+
+    const actions = document.createElement('div');
+    actions.className = 'empty-state-actions';
+
+    if (schedulesFilterMode === 'weekend') {
+      const addWeekendBtn = document.createElement('button');
+      addWeekendBtn.type = 'button';
+      addWeekendBtn.className = 'btn btn-primary';
+      addWeekendBtn.textContent = dict.newWeekendWeekBtn;
+      addWeekendBtn.addEventListener('click', createBlankWeekendWeekAndOpen);
+      actions.appendChild(addWeekendBtn);
+    } else {
+      const scanBtn = document.createElement('button');
+      scanBtn.type = 'button';
+      scanBtn.className = 'btn btn-primary';
+      scanBtn.textContent = dict.uploadImageBtn;
+      scanBtn.addEventListener('click', () => triggerOcrImagePicker('new-week'));
+
+      const addBlankBtn = document.createElement('button');
+      addBlankBtn.type = 'button';
+      addBlankBtn.className = 'btn btn-secondary';
+      addBlankBtn.textContent = dict.newBlankWeekBtn;
+      addBlankBtn.addEventListener('click', createBlankMidweekWeekAndOpen);
+
+      actions.appendChild(scanBtn);
+      actions.appendChild(addBlankBtn);
+    }
+
+    empty.appendChild(iconWrap);
+    empty.appendChild(titleEl);
+    empty.appendChild(descEl);
+    empty.appendChild(actions);
     grid.appendChild(empty);
     return;
   }
@@ -520,22 +642,12 @@ function renderSchedulesGrid() {
     editBtn.addEventListener('click', () => openWeekEditorDrawer(week.id));
     actions.appendChild(editBtn);
 
-    if (weeks.length > 1) {
-      const delBtn = document.createElement('button');
-      delBtn.type = 'button';
-      delBtn.className = 'btn btn-compact btn-ghost';
-      delBtn.textContent = dict.deleteWeekBtn;
-      delBtn.addEventListener('click', () => {
-        weeks = weeks.filter((w) => w.id !== week.id);
-        if (activeWeekId === week.id) {
-          activeWeekId = weeks[0].id;
-          currentPartIndex = 0;
-        }
-        saveWeeks(weeks, activeWeekId);
-        renderAll();
-      });
-      actions.appendChild(delBtn);
-    }
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'btn btn-compact btn-danger-ghost';
+    delBtn.textContent = dict.deleteWeekBtn;
+    delBtn.addEventListener('click', () => openDeleteConfirmModal(week.id));
+    actions.appendChild(delBtn);
 
     card.appendChild(top);
     card.appendChild(actions);
@@ -551,9 +663,107 @@ function renderAll() {
 }
 
 /* =========================================================
+   DELETE & EXIT CONFIRMATION MODALS + ANDROID BACK STACK
+   ========================================================= */
+function openDeleteConfirmModal(weekId) {
+  const week = weeks.find((w) => w.id === weekId);
+  if (!week) return;
+  pendingDeleteWeekId = weekId;
+  const dict = t();
+  $('txt-confirm-delete-msg').textContent = dict.confirmDeleteMsg(week.weekLabel, weeks.length === 1);
+  $('modal-confirm-delete').classList.add('open');
+}
+
+function closeDeleteConfirmModal() {
+  pendingDeleteWeekId = null;
+  $('modal-confirm-delete').classList.remove('open');
+}
+
+function executeConfirmedDelete() {
+  if (!pendingDeleteWeekId) return;
+  const targetId = pendingDeleteWeekId;
+  closeDeleteConfirmModal();
+
+  const curPart = getActivePart();
+  const deletingActive = activeWeekId === targetId;
+  if (deletingActive && curPart) {
+    timerEngine.pause(curPart);
+    if (AndroidOverlayBridge.isOverlayActive()) {
+      AndroidOverlayBridge.hide();
+    }
+  }
+
+  weeks = weeks.filter((w) => w.id !== targetId);
+  if (deletingActive) {
+    activeWeekId = weeks[0]?.id || null;
+    currentPartIndex = 0;
+  }
+
+  saveWeeks(weeks, activeWeekId);
+  renderAll();
+  showToast(t().toastWeekDeleted);
+}
+
+function openExitConfirmModal() {
+  const warnBanner = $('exit-running-warning');
+  if (warnBanner) {
+    warnBanner.textContent = t().confirmExitRunningWarn;
+    warnBanner.classList.toggle('hidden', !timerEngine.isRunning);
+  }
+  $('modal-confirm-exit').classList.add('open');
+}
+
+function closeExitConfirmModal() {
+  $('modal-confirm-exit').classList.remove('open');
+}
+
+async function executeConfirmedExit() {
+  closeExitConfirmModal();
+  const curPart = getActivePart();
+  if (curPart && timerEngine.isRunning) {
+    timerEngine.pause(curPart);
+  }
+  saveWeeks(weeks, activeWeekId);
+  await AndroidOverlayBridge.hide();
+  const exited = await NativeAppBridge.exitApp();
+  if (!exited) {
+    showToast(t().toastExitBrowser);
+  }
+}
+
+function handleAndroidBackButton() {
+  if ($('modal-confirm-exit')?.classList.contains('open')) {
+    closeExitConfirmModal();
+    return;
+  }
+  if ($('modal-confirm-delete')?.classList.contains('open')) {
+    closeDeleteConfirmModal();
+    return;
+  }
+  if ($('modal-summary')?.classList.contains('open')) {
+    $('modal-summary').classList.remove('open');
+    return;
+  }
+  if ($('modal-text-autofill')?.classList.contains('open')) {
+    $('modal-text-autofill').classList.remove('open');
+    return;
+  }
+  if ($('drawer-week-editor')?.classList.contains('open')) {
+    closeWeekEditorDrawer();
+    return;
+  }
+  if (currentTab !== 'timer') {
+    switchTab('timer');
+    return;
+  }
+  openExitConfirmModal();
+}
+
+/* =========================================================
    TAB SWITCHING
    ========================================================= */
 function switchTab(tabName) {
+  currentTab = tabName;
   ['timer', 'schedules', 'settings'].forEach((name) => {
     $(`tab-${name}`)?.classList.toggle('active', name === tabName);
     $(`nav-btn-${name}`)?.classList.toggle('active', name === tabName);
@@ -561,78 +771,277 @@ function switchTab(tabName) {
 }
 
 /* =========================================================
-   FULL-SCREEN SCHEDULE EDITOR WITH TOUCH DRAG-AND-DROP
+   FULL-SCREEN SCHEDULE EDITOR WITH SMARTPHONE HOME-SCREEN DND
    ========================================================= */
-function updateEditorPartBadges() {
-  const list = $('editor-parts-list');
-  if (!list) return;
-  Array.from(list.children).forEach((card, i) => {
-    const badge = card.querySelector('.part-num-badge');
-    if (badge) badge.textContent = `#${i + 1}`;
+function createFloatingDragClone(sourceCard, sourceRect) {
+  const clone = sourceCard.cloneNode(true);
+  clone.classList.add('drag-floating-clone');
+  clone.style.left = `${sourceRect.left}px`;
+  clone.style.top = `${sourceRect.top}px`;
+  clone.style.width = `${sourceRect.width}px`;
+  clone.style.height = `${sourceRect.height}px`;
+
+  // Sync live <select> and <input> values because cloneNode does not copy current form properties
+  const origSelects = sourceCard.querySelectorAll('select');
+  const cloneSelects = clone.querySelectorAll('select');
+  origSelects.forEach((sel, idx) => {
+    if (cloneSelects[idx]) cloneSelects[idx].value = sel.value;
   });
+
+  const origInputs = sourceCard.querySelectorAll('input');
+  const cloneInputs = clone.querySelectorAll('input');
+  origInputs.forEach((inp, idx) => {
+    if (cloneInputs[idx]) cloneInputs[idx].value = inp.value;
+  });
+
+  return clone;
 }
 
 function attachCardDragHandlers(handleEl, cardEl, listEl) {
   handleEl.addEventListener('pointerdown', (startEvent) => {
+    if (startEvent.pointerType === 'mouse' && startEvent.button !== 0) return;
+
     startEvent.preventDefault();
     startEvent.stopPropagation();
 
-    try {
-      handleEl.setPointerCapture(startEvent.pointerId);
-    } catch {
-      // Ignore if pointer capture is unsupported
-    }
+    const pointerId = startEvent.pointerId;
+    const startX = startEvent.clientX;
+    const startY = startEvent.clientY;
+    let latestY = startY;
+    let dragActive = false;
+    let holdTimer = null;
+    let autoScrollRaf = null;
 
-    cardEl.classList.add('dragging');
-    listEl.classList.add('is-dragging');
+    let cards = [];
+    let draggedIdx = -1;
+    let targetIdx = -1;
+    let baseRects = [];
+    let gapPx = 12;
+    let floatingClone = null;
+    let scrollContainer = null;
+    let initialScrollTop = 0;
+    let draggedCardHeight = 0;
 
-    const onPointerMove = (moveEvent) => {
-      const y = moveEvent.clientY;
-      const cards = Array.from(listEl.children);
-      const currentIdx = cards.indexOf(cardEl);
-      if (currentIdx === -1) return;
+    handleEl.classList.add('holding');
 
+    const computeVirtualLayout = (slotIdx) => {
+      const order = [];
       for (let i = 0; i < cards.length; i++) {
-        if (i === currentIdx) continue;
-        const rect = cards[i].getBoundingClientRect();
-        const midY = rect.top + rect.height / 2;
+        if (i !== draggedIdx) order.push(i);
+      }
+      order.splice(slotIdx, 0, draggedIdx);
 
-        if (i < currentIdx && y < midY) {
-          const [moved] = editorDraftParts.splice(currentIdx, 1);
-          editorDraftParts.splice(i, 0, moved);
-          listEl.insertBefore(cardEl, cards[i]);
-          updateEditorPartBadges();
-          break;
-        }
-        if (i > currentIdx && y > midY) {
-          const [moved] = editorDraftParts.splice(currentIdx, 1);
-          editorDraftParts.splice(i, 0, moved);
-          listEl.insertBefore(cardEl, cards[i].nextSibling);
-          updateEditorPartBadges();
-          break;
-        }
+      const targetTops = new Array(cards.length);
+      let cursorY = baseRects[0]?.scrollTop || 0;
+      for (const idx of order) {
+        targetTops[idx] = cursorY;
+        cursorY += (baseRects[idx]?.height || 0) + gapPx;
+      }
+      return { order, targetTops };
+    };
+
+    const applyShiftTransforms = (targetTops) => {
+      for (let i = 0; i < cards.length; i++) {
+        const delta = targetTops[i] - baseRects[i].scrollTop;
+        cards[i].style.transform = delta === 0 ? '' : `translate3d(0, ${delta}px, 0)`;
       }
     };
 
-    const endDrag = () => {
-      cardEl.classList.remove('dragging');
-      listEl.classList.remove('is-dragging');
-      handleEl.removeEventListener('pointermove', onPointerMove);
-      handleEl.removeEventListener('pointerup', endDrag);
-      handleEl.removeEventListener('pointercancel', endDrag);
+    const updateTargetSlot = () => {
+      if (!dragActive || cards.length < 2) return;
+      const scrollDelta = scrollContainer ? scrollContainer.scrollTop - initialScrollTop : 0;
+      const pointerDelta = latestY - startY;
+      const floatingTopScroll = baseRects[draggedIdx].scrollTop + pointerDelta + scrollDelta;
+      const floatingCenterScroll = floatingTopScroll + draggedCardHeight / 2;
+
+      let changed = true;
+      let guard = 0;
+      while (changed && guard < cards.length) {
+        changed = false;
+        guard += 1;
+        const { order, targetTops } = computeVirtualLayout(targetIdx);
+
+        if (targetIdx > 0) {
+          const prevCardIdx = order[targetIdx - 1];
+          const prevMid = targetTops[prevCardIdx] + baseRects[prevCardIdx].height / 2;
+          if (floatingCenterScroll < prevMid) {
+            targetIdx -= 1;
+            changed = true;
+            continue;
+          }
+        }
+
+        if (targetIdx < order.length - 1) {
+          const nextCardIdx = order[targetIdx + 1];
+          const nextMid = targetTops[nextCardIdx] + baseRects[nextCardIdx].height / 2;
+          if (floatingCenterScroll > nextMid) {
+            targetIdx += 1;
+            changed = true;
+            continue;
+          }
+        }
+      }
+
+      const { targetTops } = computeVirtualLayout(targetIdx);
+      applyShiftTransforms(targetTops);
+    };
+
+    const stepAutoScroll = () => {
+      if (!dragActive || !scrollContainer) {
+        autoScrollRaf = null;
+        return;
+      }
+      const box = scrollContainer.getBoundingClientRect();
+      const edgeZone = 72;
+      let velocity = 0;
+
+      if (latestY < box.top + edgeZone) {
+        const ratio = Math.min(1, (box.top + edgeZone - latestY) / edgeZone);
+        velocity = -Math.ceil(ratio * 12);
+      } else if (latestY > box.bottom - edgeZone) {
+        const ratio = Math.min(1, (latestY - (box.bottom - edgeZone)) / edgeZone);
+        velocity = Math.ceil(ratio * 12);
+      }
+
+      if (velocity !== 0) {
+        scrollContainer.scrollTop += velocity;
+        updateTargetSlot();
+      }
+      autoScrollRaf = requestAnimationFrame(stepAutoScroll);
+    };
+
+    const activateDrag = () => {
+      dragActive = true;
+      holdTimer = null;
+
+      cards = Array.from(listEl.children);
+      draggedIdx = cards.indexOf(cardEl);
+      if (draggedIdx < 0) {
+        cleanupListeners();
+        return;
+      }
+      targetIdx = draggedIdx;
+
+      // Subtle haptic tap when card lifts after press-and-hold
+      triggerVibrationPattern(25);
+
       try {
-        if (handleEl.hasPointerCapture?.(startEvent.pointerId)) {
-          handleEl.releasePointerCapture(startEvent.pointerId);
+        handleEl.setPointerCapture(pointerId);
+      } catch {
+        // Ignore if pointer capture unsupported
+      }
+
+      scrollContainer = cardEl.closest('.fullscreen-editor-body');
+      initialScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+
+      baseRects = cards.map((el) => {
+        const r = el.getBoundingClientRect();
+        return {
+          left: r.left,
+          top: r.top,
+          height: r.height,
+          width: r.width,
+          scrollTop: r.top + initialScrollTop,
+        };
+      });
+
+      if (baseRects.length >= 2) {
+        const measuredGap = baseRects[1].scrollTop - (baseRects[0].scrollTop + baseRects[0].height);
+        gapPx = Number.isFinite(measuredGap) && measuredGap >= 0 ? measuredGap : 12;
+      }
+
+      const draggedRect = baseRects[draggedIdx];
+      draggedCardHeight = draggedRect.height;
+
+      listEl.classList.add('is-dragging');
+      cards.forEach((el, idx) => {
+        if (idx === draggedIdx) {
+          el.classList.add('part-drag-placeholder');
+        } else {
+          el.classList.add('drag-sibling-animate');
+        }
+      });
+
+      floatingClone = createFloatingDragClone(cardEl, draggedRect);
+      floatingClone.style.transform = `translate3d(0, ${latestY - startY}px, 0) scale(1.03)`;
+      document.body.appendChild(floatingClone);
+
+      updateTargetSlot();
+      autoScrollRaf = requestAnimationFrame(stepAutoScroll);
+    };
+
+    const cleanupListeners = () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+      if (autoScrollRaf) {
+        cancelAnimationFrame(autoScrollRaf);
+        autoScrollRaf = null;
+      }
+      handleEl.classList.remove('holding');
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+      try {
+        if (handleEl.hasPointerCapture?.(pointerId)) {
+          handleEl.releasePointerCapture(pointerId);
         }
       } catch {
         // Ignore
       }
+    };
+
+    const onPointerMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      latestY = moveEvent.clientY;
+
+      if (!dragActive) {
+        const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+        if (dist > 8) {
+          cleanupListeners();
+        }
+        return;
+      }
+
+      moveEvent.preventDefault();
+      if (floatingClone) {
+        const deltaY = latestY - startY;
+        floatingClone.style.transform = `translate3d(0, ${deltaY}px, 0) scale(1.03)`;
+      }
+      updateTargetSlot();
+    };
+
+    const endDrag = (endEvent) => {
+      if (endEvent.pointerId !== pointerId) return;
+      const wasDragging = dragActive;
+      dragActive = false;
+      cleanupListeners();
+
+      if (!wasDragging) return;
+
+      if (floatingClone) {
+        floatingClone.remove();
+        floatingClone = null;
+      }
+
+      listEl.classList.remove('is-dragging');
+      cards.forEach((el) => {
+        el.classList.remove('part-drag-placeholder', 'drag-sibling-animate');
+        el.style.transform = '';
+      });
+
+      if (targetIdx !== draggedIdx && draggedIdx >= 0 && targetIdx >= 0) {
+        const [moved] = editorDraftParts.splice(draggedIdx, 1);
+        editorDraftParts.splice(targetIdx, 0, moved);
+      }
       renderEditorPartRows();
     };
 
-    handleEl.addEventListener('pointermove', onPointerMove);
-    handleEl.addEventListener('pointerup', endDrag);
-    handleEl.addEventListener('pointercancel', endDrag);
+    holdTimer = setTimeout(activateDrag, 180);
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
   });
 }
 
@@ -653,7 +1062,7 @@ function renderEditorPartRows() {
 
     card.innerHTML = `
       <div class="editor-row-1">
-        <button type="button" class="part-drag-handle" aria-label="Drag to reorder">
+        <button type="button" class="part-drag-handle" aria-label="Press and hold to reorder">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <circle cx="9" cy="5" r="1.8"/><circle cx="15" cy="5" r="1.8"/>
             <circle cx="9" cy="12" r="1.8"/><circle cx="15" cy="12" r="1.8"/>
@@ -795,7 +1204,10 @@ function closeWeekEditorDrawer() {
    ========================================================= */
 function openSummaryModal() {
   const week = getActiveWeek();
-  if (!week) return;
+  if (!week) {
+    showToast(t().toastNoActiveSchedule);
+    return;
+  }
   const summary = buildMeetingSummary(week, settings.language);
 
   $('summary-week-sub').textContent = `${week.weekLabel}${week.chairman ? ` · ${t().chairmanPrefix}: ${week.chairman}` : ''}`;
@@ -862,6 +1274,8 @@ function bindEvents() {
   ['timer', 'schedules', 'settings'].forEach((tab) => {
     $(`nav-btn-${tab}`).addEventListener('click', () => switchTab(tab));
   });
+
+  $('btn-empty-go-schedules').addEventListener('click', () => switchTab('schedules'));
 
   // Timer controls
   $('btn-start-pause').addEventListener('click', toggleStartPause);
@@ -949,6 +1363,22 @@ function bindEvents() {
     showToast(t().toastCopied);
   });
 
+  // Delete Schedule confirmation dialog controls
+  $('btn-close-confirm-delete').addEventListener('click', closeDeleteConfirmModal);
+  $('btn-cancel-confirm-delete').addEventListener('click', closeDeleteConfirmModal);
+  $('btn-accept-confirm-delete').addEventListener('click', executeConfirmedDelete);
+  $('modal-confirm-delete').addEventListener('click', (e) => {
+    if (e.target === $('modal-confirm-delete')) closeDeleteConfirmModal();
+  });
+
+  // Exit App confirmation dialog controls
+  $('btn-close-confirm-exit').addEventListener('click', closeExitConfirmModal);
+  $('btn-cancel-confirm-exit').addEventListener('click', closeExitConfirmModal);
+  $('btn-accept-confirm-exit').addEventListener('click', executeConfirmedExit);
+  $('modal-confirm-exit').addEventListener('click', (e) => {
+    if (e.target === $('modal-confirm-exit')) closeExitConfirmModal();
+  });
+
   // Schedules tab segmented toggle (Midweek / Weekend)
   $('btn-sched-midweek').addEventListener('click', () => {
     schedulesFilterMode = 'midweek';
@@ -960,20 +1390,18 @@ function bindEvents() {
   });
 
   // Midweek Schedules OCR upload + Inline Editor Scan
-  $('btn-upload-ocr').addEventListener('click', () => {
-    ocrSourceTarget = 'new-week';
-    $('ocr-image-input').click();
-  });
-  $('btn-editor-scan-image').addEventListener('click', () => {
-    ocrSourceTarget = 'replace-editor';
-    $('ocr-image-input').click();
-  });
+  $('btn-upload-ocr').addEventListener('click', () => triggerOcrImagePicker('new-week'));
+  $('btn-editor-scan-image').addEventListener('click', () => triggerOcrImagePicker('replace-editor'));
 
   $('ocr-image-input').addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+    const input = e.target;
+    const file = input.files?.[0];
+    if (!file) {
+      input.value = '';
+      return;
+    }
 
+    const dict = t();
     const isInlineEditor = ocrSourceTarget === 'replace-editor';
     const progressBox = isInlineEditor ? $('editor-ocr-progress-box') : $('ocr-progress-box');
     const statusTextEl = isInlineEditor ? $('editor-ocr-status-text') : $('ocr-status-text');
@@ -981,20 +1409,27 @@ function bindEvents() {
     const barEl = isInlineEditor ? $('editor-ocr-progress-bar') : $('ocr-progress-bar');
 
     progressBox.classList.remove('hidden');
-    statusTextEl.textContent = t().toastOcrInit;
-    pctEl.textContent = '0%';
-    barEl.style.width = '0%';
+    statusTextEl.textContent = dict.toastOcrInit;
+    pctEl.textContent = '10%';
+    barEl.style.width = '10%';
 
     try {
-      const scanResult = await scanScheduleImageOffline(file, ({ status, progress }) => {
-        statusTextEl.textContent = status;
-        pctEl.textContent = `${progress}%`;
-        barEl.style.width = `${progress}%`;
-      });
+      const scanResult = await scanScheduleImageOffline(
+        file,
+        ({ status, progress }) => {
+          statusTextEl.textContent = status;
+          pctEl.textContent = `${progress}%`;
+          barEl.style.width = `${progress}%`;
+        },
+        {
+          preparing: dict.ocrPreparingImage,
+          scanning: dict.ocrRunningMlKit,
+          parsing: dict.ocrParsingRows,
+        }
+      );
       progressBox.classList.add('hidden');
 
       if (isInlineEditor) {
-        const dict = t();
         if (scanResult.weekLabel) {
           editorDraftMeta.weekLabel = scanResult.weekLabel;
           $('edit-week-label').value = scanResult.weekLabel;
@@ -1015,46 +1450,25 @@ function bindEvents() {
     } catch (err) {
       console.error('Offline OCR failed:', err);
       progressBox.classList.add('hidden');
-      showToast(t().toastOcrFailed);
+      const code = err?.message || '';
+      if (code === 'NATIVE_MLKIT_REQUIRED') {
+        showToast(dict.toastOcrNativeOnly);
+      } else if (code === 'NO_TEXT_DETECTED') {
+        showToast(dict.toastOcrNoText);
+      } else if (code === 'IMAGE_DECODE_ERROR') {
+        showToast(dict.toastImageDecodeError);
+      } else {
+        showToast(dict.toastOcrFailed);
+      }
+    } finally {
+      input.value = '';
     }
   });
 
-  $('btn-new-blank-week').addEventListener('click', () => {
-    const newWeek = createWeekObject(
-      {
-        meetingType: 'midweek',
-        weekLabel: settings.language === 'tl' ? 'Bagong Linggo' : 'New Schedule Week',
-        congregationName: getActiveWeek()?.congregationName || 'Kingdom Hall',
-        chairman: '',
-        parts: createDefaultMidweekParts(settings.language),
-      },
-      settings.language
-    );
-    weeks.unshift(newWeek);
-    saveWeeks(weeks, activeWeekId);
-    renderSchedulesGrid();
-    openWeekEditorDrawer(newWeek.id);
-  });
+  $('btn-new-blank-week').addEventListener('click', createBlankMidweekWeekAndOpen);
 
   // Weekend Schedule manual creator
-  $('btn-new-weekend-week').addEventListener('click', () => {
-    const newWeekend = createWeekObject(
-      {
-        meetingType: 'weekend',
-        weekLabel: settings.language === 'tl' ? 'Dulong Sanlinggo' : 'Weekend Meeting',
-        congregationName: getActiveWeek()?.congregationName || 'Kingdom Hall',
-        chairman: '',
-        parts: createDefaultWeekendParts(settings.language),
-      },
-      settings.language
-    );
-    weeks.unshift(newWeekend);
-    activeWeekId = newWeekend.id;
-    currentPartIndex = 0;
-    saveWeeks(weeks, activeWeekId);
-    renderAll();
-    openWeekEditorDrawer(newWeekend.id);
-  });
+  $('btn-new-weekend-week').addEventListener('click', createBlankWeekendWeekAndOpen);
 
   // Full-Screen Schedule Editor controls
   $('btn-cancel-editor-drawer').addEventListener('click', closeWeekEditorDrawer);
@@ -1268,7 +1682,7 @@ Tagabasa sa Pag-aaral: Brother Tan`;
     showToast(t().toastVibTest);
   });
 
-  // Native Android Overlay Commands & Lifecycle Hooks
+  // Native Android Overlay Commands & Lifecycle Hooks (Auto-Float + Back Button)
   initOverlayListeners(
     (action) => {
       if (action === 'PLAY_PAUSE') {
@@ -1286,9 +1700,18 @@ Tagabasa sa Pag-aaral: Brother Tan`;
         handleAppLeave();
       } else if (lifecycleEvent === 'APP_RETURN') {
         handleAppReturn();
+      } else if (lifecycleEvent === 'BACK_PRESSED') {
+        handleAndroidBackButton();
       }
     }
   );
+
+  // Keyboard Escape fallback for web preview testing of Back navigation
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      handleAndroidBackButton();
+    }
+  });
 
   // WebView visibilitychange fallback for Auto-Float & timer sync
   document.addEventListener('visibilitychange', () => {

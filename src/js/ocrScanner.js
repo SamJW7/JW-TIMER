@@ -1,4 +1,4 @@
-import { createWorker } from 'tesseract.js';
+import { isNativeAndroid, NativeAppBridge } from './bridges.js';
 import {
   createDefaultMidweekParts,
   generateId,
@@ -23,9 +23,43 @@ const SUBLINE_DESCRIPTION_RE =
 const SCRIPTURE_REF_ONLY_RE = /^[1-3]?\s*[A-Za-zÀ-ÿ]+\s+\d{1,3}\s*:\s*\d{1,3}(?:\s*[-–]\s*\d{1,3})?\.?$/i;
 
 /* =========================================================
-   OFFSCREEN HTML5 CANVAS PRE-PROCESSING (100% OFFLINE)
-   2x Scale + High-Contrast Grayscale Luminance Enhancement
+   OFFSCREEN HTML5 CANVAS IMAGE NORMALIZATION (100% OFFLINE)
+   Android WebView Safe Decoder + Crisp Base64 Bridge Payload
    ========================================================= */
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string' && reader.result) {
+        resolve(reader.result);
+      } else {
+        reject(new Error('IMAGE_DECODE_ERROR'));
+      }
+    };
+    reader.onerror = () => reject(reader.error || new Error('IMAGE_DECODE_ERROR'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageElement(src, cleanupFn) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({
+        drawable: img,
+        width: img.naturalWidth || img.width,
+        height: img.naturalHeight || img.height,
+        cleanup: cleanupFn,
+      });
+    };
+    img.onerror = () => {
+      cleanupFn?.();
+      reject(new Error('IMAGE_DECODE_ERROR'));
+    };
+    img.src = src;
+  });
+}
+
 async function loadDrawableImage(file) {
   if (typeof createImageBitmap === 'function') {
     try {
@@ -37,37 +71,40 @@ async function loadDrawableImage(file) {
         cleanup: () => bitmap.close?.(),
       };
     } catch {
-      // Fallback to HTMLImageElement below
+      // Fallback to object URL below
     }
   }
 
-  return new Promise((resolve, reject) => {
+  try {
     const objectUrl = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => {
-      resolve({
-        drawable: img,
-        width: img.naturalWidth || img.width,
-        height: img.naturalHeight || img.height,
-        cleanup: () => URL.revokeObjectURL(objectUrl),
-      });
-    };
-    img.onerror = (err) => {
-      URL.revokeObjectURL(objectUrl);
-      reject(err);
-    };
-    img.src = objectUrl;
-  });
+    return await loadImageElement(objectUrl, () => URL.revokeObjectURL(objectUrl));
+  } catch {
+    // Final fallback for Android WebView content URIs: FileReader Data URL
+    const dataUrl = await readFileAsDataUrl(file);
+    return await loadImageElement(dataUrl, () => {});
+  }
 }
 
-async function preprocessImageForOcr(imageFile) {
-  const { drawable, width, height, cleanup } = await loadDrawableImage(imageFile);
+async function preprocessImageToBase64(imageFile) {
+  let drawableBundle = null;
   try {
-    // 2x upscale capped sensibly to protect low-RAM Android WebViews on ultra-tall captures
-    const maxDim = 4800;
-    let scale = 2;
-    if (width * scale > maxDim || height * scale > maxDim) {
-      scale = Math.max(1.2, Math.min(maxDim / Math.max(1, width), maxDim / Math.max(1, height)));
+    drawableBundle = await loadDrawableImage(imageFile);
+  } catch {
+    // If bitmap/image loading fails, fall back cleanly to raw Data URL
+    return await readFileAsDataUrl(imageFile);
+  }
+
+  const { drawable, width, height, cleanup } = drawableBundle;
+  try {
+    // Keep crisp text resolution for ML Kit while capping size to protect Capacitor JSON bridge memory
+    const maxDim = 2600;
+    const minLongEdge = 1600;
+    const longest = Math.max(width || 1, height || 1);
+    let scale = 1;
+    if (longest < minLongEdge) {
+      scale = Math.min(2, minLongEdge / longest);
+    } else if (longest > maxDim) {
+      scale = maxDim / longest;
     }
 
     const targetW = Math.max(1, Math.round(width * scale));
@@ -77,37 +114,20 @@ async function preprocessImageForOcr(imageFile) {
     canvas.width = targetW;
     canvas.height = targetH;
 
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return imageFile;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return await readFileAsDataUrl(imageFile);
+    }
 
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, targetW, targetH);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(drawable, 0, 0, targetW, targetH);
 
-    const supportsFilter = typeof ctx.filter === 'string';
-    if (supportsFilter) {
-      ctx.filter = 'grayscale(100%) contrast(160%)';
-      ctx.drawImage(drawable, 0, 0, targetW, targetH);
-      ctx.filter = 'none';
-    } else {
-      ctx.drawImage(drawable, 0, 0, targetW, targetH);
-      const imgData = ctx.getImageData(0, 0, targetW, targetH);
-      const px = imgData.data;
-      const contrast = 1.6;
-      for (let i = 0; i < px.length; i += 4) {
-        const lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
-        const enhanced = Math.min(255, Math.max(0, (lum - 128) * contrast + 128));
-        px[i] = enhanced;
-        px[i + 1] = enhanced;
-        px[i + 2] = enhanced;
-      }
-      ctx.putImageData(imgData, 0, 0);
-    }
-
-    return canvas;
+    return canvas.toDataURL('image/jpeg', 0.94);
   } finally {
-    cleanup();
+    cleanup?.();
   }
 }
 
@@ -436,6 +456,7 @@ function extractMinutesFromText(text) {
 
 /* =========================================================
    PRIMARY S-140 / KHS 3-COLUMN Y-ROW PARSER
+   Consumes Native ML Kit Text Blocks + Bounding Boxes
    ========================================================= */
 function parseS140ThreeColumn(data) {
   const words = [];
@@ -747,65 +768,62 @@ function parsePlanBRegex(fullText) {
 }
 
 /* =========================================================
-   OFFLINE TESSERACT.JS RUNNER
+   OFFLINE NATIVE ANDROID ML KIT OCR RUNNER (ZERO WEB WORKERS)
    ========================================================= */
-export async function scanScheduleImageOffline(imageFile, onProgress) {
-  let worker = null;
-  try {
-    if (typeof onProgress === 'function') {
-      onProgress({ status: 'Enhancing image...', progress: 8 });
-    }
-    const processedInput = await preprocessImageForOcr(imageFile);
+export async function scanScheduleImageOffline(imageFile, onProgress, statusLabels = {}) {
+  if (!isNativeAndroid()) {
+    throw new Error('NATIVE_MLKIT_REQUIRED');
+  }
 
-    worker = await createWorker(['eng', 'tgl'], 1, {
-      workerPath: './tesseract/worker.min.js',
-      corePath: './tesseract',
-      langPath: './tessdata',
-      workerBlobURL: false,
-      gzip: true,
-      logger: (msg) => {
-        if (typeof onProgress === 'function') {
-          onProgress({
-            status: msg.status || 'Processing',
-            progress: Math.max(10, Math.round((msg.progress || 0) * 100)),
-          });
-        }
-      },
-    });
+  onProgress?.({
+    status: statusLabels.preparing || 'Preparing image...',
+    progress: 20,
+  });
 
-    const result = await worker.recognize(processedInput, {}, { blocks: true, text: true });
-    const data = result?.data || {};
-    const fullText = data.text || '';
-    const meta = extractMetadataFromText(fullText);
+  const base64 = await preprocessImageToBase64(imageFile);
 
-    const primary = parseS140ThreeColumn(data);
-    if (primary && primary.parts.length >= 3) {
-      return {
-        modeUsed: '3-column',
-        weekLabel: meta.weekLabel || 'December 4, 2026',
-        chairman: (primary.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, ''),
-        parts: primary.parts,
-        rawText: fullText,
-      };
-    }
+  onProgress?.({
+    status: statusLabels.scanning || 'Scanning offline via Native Android ML Kit...',
+    progress: 55,
+  });
 
-    const planB = parsePlanBRegex(fullText);
+  const data = await NativeAppBridge.recognizeImage(base64);
+  const fullText = (data?.text || '').trim();
+  if (!fullText) {
+    throw new Error('NO_TEXT_DETECTED');
+  }
+
+  onProgress?.({
+    status: statusLabels.parsing || 'Parsing schedule rows...',
+    progress: 85,
+  });
+
+  const meta = extractMetadataFromText(fullText);
+  const primary = parseS140ThreeColumn(data);
+  if (primary && primary.parts.length >= 3) {
+    onProgress?.({ status: 'Done', progress: 100 });
     return {
-      modeUsed: 'plan-b',
+      modeUsed: '3-column',
       weekLabel: meta.weekLabel || 'December 4, 2026',
-      chairman: (planB.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, ''),
-      parts: planB.parts,
+      chairman: (primary.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, ''),
+      parts: primary.parts,
       rawText: fullText,
     };
-  } finally {
-    if (worker) {
-      try {
-        await worker.terminate();
-      } catch {
-        // ignore
-      }
-    }
   }
+
+  const planB = parsePlanBRegex(fullText);
+  if (!planB.parts.length) {
+    throw new Error('NO_TEXT_DETECTED');
+  }
+
+  onProgress?.({ status: 'Done', progress: 100 });
+  return {
+    modeUsed: 'plan-b',
+    weekLabel: meta.weekLabel || 'December 4, 2026',
+    chairman: (planB.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, ''),
+    parts: planB.parts,
+    rawText: fullText,
+  };
 }
 
 /* =========================================================

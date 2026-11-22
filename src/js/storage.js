@@ -343,9 +343,9 @@ export function saveSettings(settings) {
 export function loadWeeks(lang = 'tl') {
   try {
     const raw = localStorage.getItem(WEEKS_STORAGE_KEY);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return parsed.map((w) => ({
           ...w,
           meetingType: w.meetingType === 'weekend' ? 'weekend' : 'midweek',
@@ -408,6 +408,7 @@ export function loadWeeks(lang = 'tl') {
 }
 
 export function loadActiveWeekId(weeks) {
+  if (!Array.isArray(weeks) || weeks.length === 0) return null;
   try {
     const saved = localStorage.getItem(ACTIVE_WEEK_KEY);
     if (saved && weeks.some((w) => w.id === saved)) return saved;
@@ -422,6 +423,8 @@ export function saveWeeks(weeks, activeWeekId) {
     localStorage.setItem(WEEKS_STORAGE_KEY, JSON.stringify(weeks));
     if (activeWeekId) {
       localStorage.setItem(ACTIVE_WEEK_KEY, activeWeekId);
+    } else {
+      localStorage.removeItem(ACTIVE_WEEK_KEY);
     }
   } catch (err) {
     console.warn('Failed to save weeks:', err);

@@ -10,7 +10,7 @@ let commandCallback = null;
 let lifecycleCallback = null;
 let lastOverlayState = null;
 
-function isNativeAndroid() {
+export function isNativeAndroid() {
   try {
     return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
   } catch {
@@ -89,6 +89,30 @@ export async function setKeepScreenAwake(enabled) {
   }
   return false;
 }
+
+/* =========================================================
+   NATIVE APP LIFECYCLE & ML KIT OCR BRIDGE
+   ========================================================= */
+export const NativeAppBridge = {
+  async exitApp() {
+    if (isNativeAndroid()) {
+      try {
+        await OverlayNative.exitApp();
+        return true;
+      } catch (err) {
+        console.warn('Native exitApp failed:', err);
+      }
+    }
+    return false;
+  },
+
+  async recognizeImage(base64) {
+    if (!isNativeAndroid()) {
+      throw new Error('NATIVE_MLKIT_REQUIRED');
+    }
+    return await OverlayNative.recognizeImage({ base64 });
+  },
+};
 
 /* =========================================================
    ANDROID FLOATING OVERLAY BRIDGE (window.AndroidOverlay)

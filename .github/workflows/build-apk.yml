@@ -38,16 +38,19 @@ jobs:
             npx cap add android
           fi
 
-      - name: Copy native Kotlin Overlay files & AndroidManifest.xml
+      - name: Copy native Kotlin Overlay files, launcher icons & AndroidManifest.xml
         run: |
           mkdir -p android/app/src/main/java/com/midweek/meetingtimer
           cp android-template/MainActivity.kt android/app/src/main/java/com/midweek/meetingtimer/MainActivity.kt
           cp android-template/OverlayPlugin.kt android/app/src/main/java/com/midweek/meetingtimer/OverlayPlugin.kt
           cp android-template/OverlayService.kt android/app/src/main/java/com/midweek/meetingtimer/OverlayService.kt
           cp android-template/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          if [ -d "android-template/res" ]; then
+            cp -r android-template/res/* android/app/src/main/res/
+          fi
           rm -f android/app/src/main/java/com/midweek/meetingtimer/MainActivity.java
 
-      - name: Enable Kotlin support in Android Gradle
+      - name: Enable Kotlin & Native Offline ML Kit OCR in Android Gradle
         run: |
           node -e '
             const fs = require("fs");
@@ -62,7 +65,7 @@ jobs:
               fs.writeFileSync("android/build.gradle", rootGradle);
             }
 
-            // 2. Apply kotlin-android plugin and JVM 21 target in android/app/build.gradle
+            // 2. Apply kotlin-android plugin, JVM 21 target, and bundled offline ML Kit Text Recognition in android/app/build.gradle
             let appGradle = fs.readFileSync("android/app/build.gradle", "utf8");
             if (!appGradle.includes("kotlin-android")) {
               if (appGradle.includes("apply plugin: '\''com.android.application'\''")) {
@@ -76,6 +79,12 @@ jobs:
             }
             if (!appGradle.includes("kotlinOptions")) {
               appGradle += "\nandroid {\n    kotlinOptions {\n        jvmTarget = '\''21'\''\n    }\n}\n";
+            }
+            if (!appGradle.includes("com.google.mlkit:text-recognition")) {
+              appGradle = appGradle.replace(
+                /dependencies\s*\{/,
+                "dependencies {\n    implementation '\''com.google.mlkit:text-recognition:16.0.1'\''"
+              );
             }
             fs.writeFileSync("android/app/build.gradle", appGradle);
           '

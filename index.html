@@ -4,9 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>JW Timer</title>
-    <meta name="description" content="Offline JW Timer for Midweek and Weekend Congregation Meetings with S-140/KHS schedule OCR scanner, vibration alerts, plain-text overtime reporting, and auto-floating Android overlay." />
+    <meta name="description" content="Offline JW Timer for Midweek and Weekend Congregation Meetings with native Android ML Kit schedule OCR scanner, vibration alerts, plain-text overtime reporting, and auto-floating Android overlay." />
     <meta property="og:title" content="JW Timer" />
-    <meta property="og:description" content="Offline JW Timer for Midweek and Weekend Congregation Meetings with S-140/KHS schedule OCR scanner, vibration alerts, plain-text overtime reporting, and auto-floating Android overlay." />
+    <meta property="og:description" content="Offline JW Timer for Midweek and Weekend Congregation Meetings with native Android ML Kit schedule OCR scanner, vibration alerts, plain-text overtime reporting, and auto-floating Android overlay." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="stylesheet" href="/src/styles/tokens.css" />
@@ -14,6 +14,9 @@
     <link rel="stylesheet" href="/src/styles/components.css" />
   </head>
   <body class="theme-midnight">
+    <!-- Root-Level Accessible File Input for Reliable Android WebView Gallery/File Picker -->
+    <input type="file" id="ocr-image-input" accept="image/*" class="sr-file-input" />
+
     <!-- Browser Picture-in-Picture Fallback Elements -->
     <canvas id="pip-canvas" width="480" height="240" class="hidden"></canvas>
     <video id="pip-video" muted playsinline autoplay class="hidden"></video>
@@ -40,7 +43,21 @@
     <main class="app-main">
       <!-- TAB 1: TIMER -->
       <section id="tab-timer" class="tab-panel active" aria-labelledby="nav-label-timer">
-        <div class="timer-workspace">
+        <!-- Empty State when all schedules have been deleted -->
+        <div class="surface-card empty-state-card hidden" id="timer-empty-state">
+          <div class="empty-state-icon" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/></svg>
+          </div>
+          <h2 class="empty-state-title" id="txt-timer-empty-title">No active schedule selected</h2>
+          <p class="empty-state-desc" id="txt-timer-empty-desc">Create, paste, or scan a meeting schedule to start timing.</p>
+          <div class="empty-state-actions">
+            <button type="button" class="btn btn-primary" id="btn-empty-go-schedules">
+              <span id="txt-empty-go-schedules">Go to Schedules</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="timer-workspace" id="timer-stage-content">
           <!-- Primary Countdown Stage -->
           <div class="surface-card">
             <div class="timer-meta-top">
@@ -146,7 +163,6 @@
 
         <!-- Midweek Schedule Tools -->
         <div class="schedules-toolbar" id="toolbar-midweek">
-          <input type="file" id="ocr-image-input" accept="image/*" class="hidden" />
           <button type="button" class="btn btn-primary" id="btn-upload-ocr">
             <span id="txt-upload-ocr">Upload Schedule Image</span>
           </button>
@@ -397,7 +413,7 @@
           </div>
 
           <div class="editor-parts-toolbar">
-            <strong class="editor-parts-heading" id="txt-editor-parts-label">Parts (drag ⋮⋮ to reorder)</strong>
+            <strong class="editor-parts-heading" id="txt-editor-parts-label">Parts (hold &amp; drag ⋮⋮ to reorder)</strong>
             <button type="button" class="btn btn-compact btn-primary" id="btn-add-part-row">
               <span id="txt-add-part-row">+ Add Part</span>
             </button>
@@ -496,6 +512,49 @@
           </button>
           <button type="button" class="btn btn-success" id="btn-copy-plain-report">
             <span id="txt-copy-plain-report">Copy Plain-Text Report</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFIRM DELETE SCHEDULE DIALOG -->
+    <div class="sheet-backdrop dialog-center" id="modal-confirm-delete">
+      <div class="sheet-panel confirm-dialog-panel" role="alertdialog" aria-modal="true" aria-labelledby="txt-confirm-delete-title">
+        <div class="sheet-header">
+          <h3 class="section-heading" style="font-size:16px;" id="txt-confirm-delete-title">Delete Schedule?</h3>
+          <button type="button" class="btn btn-compact btn-ghost" id="btn-close-confirm-delete">✕</button>
+        </div>
+        <div class="sheet-body">
+          <p class="confirm-dialog-message" id="txt-confirm-delete-msg"></p>
+        </div>
+        <div class="sheet-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-confirm-delete">
+            <span id="txt-cancel-delete">Cancel</span>
+          </button>
+          <button type="button" class="btn btn-danger" id="btn-accept-confirm-delete">
+            <span id="txt-accept-delete">Delete Schedule</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFIRM EXIT APP DIALOG (WITH RUNNING TIMER WARNING) -->
+    <div class="sheet-backdrop dialog-center" id="modal-confirm-exit">
+      <div class="sheet-panel confirm-dialog-panel" role="alertdialog" aria-modal="true" aria-labelledby="txt-confirm-exit-title">
+        <div class="sheet-header">
+          <h3 class="section-heading" style="font-size:16px;" id="txt-confirm-exit-title">Exit JW Timer? / Lumabas sa JW Timer?</h3>
+          <button type="button" class="btn btn-compact btn-ghost" id="btn-close-confirm-exit">✕</button>
+        </div>
+        <div class="sheet-body">
+          <p class="confirm-dialog-message" id="txt-confirm-exit-msg">Do you want to exit JW Timer?</p>
+          <div class="exit-warning-banner hidden" id="exit-running-warning"></div>
+        </div>
+        <div class="sheet-footer">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-confirm-exit">
+            <span id="txt-exit-stay">Stay</span>
+          </button>
+          <button type="button" class="btn btn-danger" id="btn-accept-confirm-exit">
+            <span id="txt-exit-leave">Exit App</span>
           </button>
         </div>
       </div>
