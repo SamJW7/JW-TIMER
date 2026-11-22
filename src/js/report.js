@@ -4,6 +4,7 @@ import { formatDurationMMSS } from './timerEngine.js';
 export function buildMeetingSummary(week, lang = 'en') {
   const t = I18N[lang] || I18N.en;
   const parts = Array.isArray(week?.parts) ? week.parts : [];
+  const isWeekend = week?.meetingType === 'weekend';
 
   let totalAllottedSec = 0;
   let totalActualSec = 0;
@@ -18,7 +19,7 @@ export function buildMeetingSummary(week, lang = 'en') {
 
     let overtimeLabel = t.reportPending;
     let isOvertime = false;
-    let isTimed = actualSec > 0;
+    const isTimed = actualSec > 0;
 
     if (isTimed) {
       if (diffSec > 0) {
@@ -47,9 +48,8 @@ export function buildMeetingSummary(week, lang = 'en') {
   const netSign = netDiffSec > 0 ? '+' : netDiffSec < 0 ? '-' : '';
   const netFormatted = `${netSign}${formatDurationMMSS(Math.abs(netDiffSec))}`;
 
-  // Clean plain-text report without ASCII boxes or heavy symbols
   const lines = [];
-  lines.push(t.reportTitle);
+  lines.push(isWeekend ? t.reportTitleWeekend : t.reportTitleMidweek);
   lines.push(`${t.reportWeek}: ${week?.weekLabel || '-'}`);
   if (week?.congregationName) {
     lines.push(`${week.congregationName}`);

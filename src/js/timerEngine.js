@@ -86,6 +86,33 @@ export class MeetingTimerEngine {
     this.onStateChange?.();
   }
 
+  adjustRemainingSeconds(part, deltaRemainingSec, settings) {
+    if (!part) return;
+    const targetSeconds = (Number(part.plannedMinutes) || 1) * 60;
+    const prevElapsed = Number(part.actualSeconds) || 0;
+    // Decreasing remaining time increases elapsed seconds; increasing remaining time rewinds elapsed seconds
+    const nextElapsed = Math.max(0, prevElapsed - deltaRemainingSec);
+    part.actualSeconds = nextElapsed;
+
+    if (this.isRunning) {
+      this.baseElapsedSeconds = nextElapsed;
+      this.startTimestampMs = Date.now();
+    }
+
+    const remainingSeconds = targetSeconds - nextElapsed;
+    if (!part.firedAlerts) {
+      part.firedAlerts = { oneMin: false, thirtySec: false, zero: false };
+    }
+    if (remainingSeconds > 60) part.firedAlerts.oneMin = false;
+    if (remainingSeconds > 30) part.firedAlerts.thirtySec = false;
+    if (remainingSeconds > 0) part.firedAlerts.zero = false;
+
+    if (this.isRunning) {
+      this.checkMilestones(part, remainingSeconds, targetSeconds, settings);
+    }
+    this.onStateChange?.();
+  }
+
   checkMilestones(part, remainingSeconds, targetSeconds, settings) {
     const vib = settings?.vibration;
     if (!vib?.enabled) return;

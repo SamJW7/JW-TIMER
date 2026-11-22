@@ -7,6 +7,7 @@ const OverlayNative = registerPlugin('Overlay');
 let wakeLockSentinel = null;
 let overlayActive = false;
 let commandCallback = null;
+let lifecycleCallback = null;
 let lastOverlayState = null;
 
 function isNativeAndroid() {
@@ -101,14 +102,21 @@ function dispatchCommand(action) {
   }
 }
 
-export function initOverlayListeners(onCommand) {
+export function initOverlayListeners(onCommand, onLifecycle) {
   commandCallback = onCommand;
+  lifecycleCallback = onLifecycle;
 
   if (isNativeAndroid()) {
     try {
       OverlayNative.addListener('overlayAction', (data) => {
         if (data?.action) {
           dispatchCommand(data.action);
+        }
+      });
+
+      OverlayNative.addListener('appLifecycle', (data) => {
+        if (data?.event && typeof lifecycleCallback === 'function') {
+          lifecycleCallback(data.event, Boolean(data.hasPermission));
         }
       });
     } catch (err) {
@@ -146,7 +154,7 @@ function drawPiPPreview(state) {
 
   ctx.fillStyle = '#f8fafc';
   ctx.font = 'bold 20px sans-serif';
-  const title = (state.partTitle || 'Midweek Timer').slice(0, 34);
+  const title = (state.partTitle || 'JW Timer').slice(0, 34);
   ctx.fillText(title, canvas.width / 2, 168);
 
   ctx.fillStyle = '#94a3b8';
@@ -193,6 +201,7 @@ export const AndroidOverlayBridge = {
     return overlayActive;
   },
 
+  // Manual tap on Float Overlay button — prompts for permission if missing
   async toggle(state) {
     lastOverlayState = state;
     if (isNativeAndroid()) {
@@ -214,9 +223,23 @@ export const AndroidOverlayBridge = {
       return { active: true, permissionRequired: false };
     }
 
-    // Browser Picture-in-Picture fallback
     const started = await toggleBrowserPiP(state);
     return { active: started, permissionRequired: false, browserFallback: true };
+  },
+
+  // Silent Auto-Float when leaving app — never opens permission settings automatically
+  async tryAutoShow(state) {
+    lastOverlayState = state;
+    if (!isNativeAndroid()) return false;
+    try {
+      const perm = await OverlayNative.checkPermission();
+      if (!perm?.granted) return false;
+      await OverlayNative.startOverlay(state);
+      overlayActive = true;
+      return true;
+    } catch {
+      return false;
+    }
   },
 
   async syncState(state) {
@@ -235,7 +258,7 @@ export const AndroidOverlayBridge = {
   },
 
   async hide() {
-    if (!overlayActive) return;
+    if (!overlayActive && !isNativeAndroid()) return;
     overlayActive = false;
     if (isNativeAndroid()) {
       try {
@@ -257,9 +280,9 @@ export const AndroidOverlayBridge = {
   },
 };
 
-// Expose global bridge for native Android WebView evaluateJavascript or external callers
 window.AndroidOverlay = {
   toggle: (state) => AndroidOverlayBridge.toggle(state),
+  tryAutoShow: (state) => AndroidOverlayBridge.tryAutoShow(state),
   updateState: (state) => AndroidOverlayBridge.syncState(state),
   hide: () => AndroidOverlayBridge.hide(),
   dispatchCommand: (action) => dispatchCommand(action),

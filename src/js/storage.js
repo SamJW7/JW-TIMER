@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS = {
   language: 'tl',
   theme: 'midnight',
   keepAwake: true,
+  autoFloatOnLeave: true,
   vibration: {
     enabled: true,
     alert60: true,
@@ -144,29 +145,101 @@ export function createDefaultMidweekParts(lang = 'tl') {
   ];
 }
 
+export function createDefaultWeekendParts(lang = 'tl') {
+  const isTl = lang === 'tl';
+  return [
+    {
+      id: generateId('part'),
+      title: isTl ? 'Pampublikong Pahayag' : 'Public Talk',
+      section: 'weekend',
+      speaker: '',
+      assistant: '',
+      isTalk: true,
+      plannedMinutes: 30,
+      actualSeconds: 0,
+      completed: false,
+      firedAlerts: { oneMin: false, thirtySec: false, zero: false },
+    },
+    {
+      id: generateId('part'),
+      title: isTl ? 'Pag-aaral sa Bantayan' : 'Watchtower Study',
+      section: 'weekend',
+      speaker: '',
+      assistant: '',
+      isTalk: true,
+      plannedMinutes: 60,
+      actualSeconds: 0,
+      completed: false,
+      firedAlerts: { oneMin: false, thirtySec: false, zero: false },
+    },
+  ];
+}
+
 export function generateId(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
+export function sanitizeRoleValue(val) {
+  let clean = String(val || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+
+  // Reject bare placeholder fragments that lack an actual person's name
+  if (/^(?:unassigned|walang\s+nakatala|name|pangalan|speak|nan|none|n\/a|-+)$/i.test(clean)) {
+    return '';
+  }
+
+  // Strip leaked placeholder suffix like "Student: Speak", "Assistant 1: Nan", "Speaker: Name"
+  const roleMatch = clean.match(/^([^:]{2,32}:)\s*(.*)$/);
+  if (roleMatch) {
+    const afterColon = roleMatch[2].trim();
+    if (!afterColon || /^(?:name|pangalan|speak|nan|unassigned|none|-+)$/i.test(afterColon)) {
+      return '';
+    }
+    clean = `${roleMatch[1]} ${afterColon}`;
+  }
+
+  return clean;
+}
+
 export function normalizePart(raw, index = 0) {
   const title = String(raw?.title || `Part ${index + 1}`).trim();
-  const section = ['opening', 'treasures', 'ministry', 'living', 'concluding'].includes(raw?.section)
+  const validSections = ['opening', 'treasures', 'ministry', 'living', 'concluding', 'weekend'];
+  const section = validSections.includes(raw?.section)
     ? raw.section
     : inferSectionFromTitle(title);
 
-  let speaker = String(raw?.speaker || '').trim();
-  // Ensure CBS Reader is stripped if present inside CBS speaker string
-  if (/pag-aaral|bible study|cbs/i.test(title)) {
-    speaker = speaker.replace(/\s*\((?:tagabasa|reader)\s*:[^)]*\)/gi, '').trim();
+  let speaker = sanitizeRoleValue(raw?.speaker || '');
+  let assistant = sanitizeRoleValue(raw?.assistant || '');
+
+  // Only Ministry parts allow an assistant, and Bible Reading never has an assistant
+  if (section !== 'ministry' || /pagbabasa|bible\s*reading/i.test(title)) {
+    assistant = '';
   }
+
+  // Exclude CBS Reader and Watchtower Reader while preserving Conductor
+  if (/pag-aaral|bible study|cbs|bantayan|watchtower/i.test(title)) {
+    speaker = sanitizeRoleValue(
+      speaker
+        .replace(/\s*(?:\/|&|,|\||;)?\s*(?:cbs|watchtower)?\s*(?:tagabasa|reader)\s*[:\-]?[^|)]*/gi, '')
+        .replace(/\s*\((?:tagabasa|reader)[^)]*\)/gi, '')
+    );
+    assistant = '';
+  }
+
+  const isTalk =
+    /pagbabasa|bible\s*reading/i.test(title) || section === 'weekend'
+      ? true
+      : typeof raw?.isTalk === 'boolean'
+        ? raw.isTalk
+        : section !== 'ministry';
 
   return {
     id: raw?.id || generateId('part'),
     title,
     section,
     speaker,
-    assistant: String(raw?.assistant || '').trim(),
-    isTalk: typeof raw?.isTalk === 'boolean' ? raw.isTalk : section !== 'ministry',
+    assistant,
+    isTalk,
     plannedMinutes: Math.max(1, Number(raw?.plannedMinutes) || 5),
     actualSeconds: Math.max(0, Number(raw?.actualSeconds) || 0),
     completed: Boolean(raw?.completed),
@@ -180,6 +253,9 @@ export function normalizePart(raw, index = 0) {
 
 export function inferSectionFromTitle(title) {
   const low = title.toLowerCase();
+  if (low.includes('pampublikong pahayag') || low.includes('public talk') || low.includes('bantayan') || low.includes('watchtower')) {
+    return 'weekend';
+  }
   if (low.includes('pambungad') || low.includes('opening')) return 'opening';
   if (low.includes('pangwakas') || low.includes('concluding') || low.includes('closing')) return 'concluding';
   if (
@@ -207,14 +283,22 @@ export function inferSectionFromTitle(title) {
   return 'ministry';
 }
 
-export function createWeekObject({ weekLabel, congregationName = 'Kingdom Hall', chairman = '', parts = [] }, lang = 'tl') {
+export function createWeekObject(
+  { weekLabel, congregationName = 'Kingdom Hall', chairman = '', parts = [], meetingType = 'midweek' },
+  lang = 'tl'
+) {
+  const normalizedType = meetingType === 'weekend' ? 'weekend' : 'midweek';
+  const defaultParts =
+    normalizedType === 'weekend' ? createDefaultWeekendParts(lang) : createDefaultMidweekParts(lang);
+
   return {
     id: generateId('week'),
-    weekLabel: (weekLabel || '').trim() || (lang === 'tl' ? 'Bagong Linggo' : 'New Week'),
+    meetingType: normalizedType,
+    weekLabel: (weekLabel || '').trim() || (lang === 'tl' ? 'Bagong Iskedyul' : 'New Schedule'),
     congregationName: (congregationName || '').trim() || 'Kingdom Hall',
     chairman: (chairman || '').trim(),
     createdAt: Date.now(),
-    parts: (parts.length > 0 ? parts : createDefaultMidweekParts(lang)).map((p, idx) => normalizePart(p, idx)),
+    parts: (parts.length > 0 ? parts : defaultParts).map((p, idx) => normalizePart(p, idx)),
   };
 }
 
@@ -226,6 +310,10 @@ export function loadSettings() {
       return {
         ...DEFAULT_SETTINGS,
         ...parsed,
+        autoFloatOnLeave:
+          typeof parsed.autoFloatOnLeave === 'boolean'
+            ? parsed.autoFloatOnLeave
+            : DEFAULT_SETTINGS.autoFloatOnLeave,
         vibration: {
           ...DEFAULT_SETTINGS.vibration,
           ...(parsed.vibration || {}),
@@ -260,7 +348,12 @@ export function loadWeeks(lang = 'tl') {
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed.map((w) => ({
           ...w,
-          parts: Array.isArray(w.parts) ? w.parts.map((p, i) => normalizePart(p, i)) : createDefaultMidweekParts(lang),
+          meetingType: w.meetingType === 'weekend' ? 'weekend' : 'midweek',
+          parts: Array.isArray(w.parts)
+            ? w.parts.map((p, i) => normalizePart(p, i))
+            : w.meetingType === 'weekend'
+              ? createDefaultWeekendParts(lang)
+              : createDefaultMidweekParts(lang),
         }));
       }
     }
@@ -285,6 +378,7 @@ export function loadWeeks(lang = 'tl') {
       });
       const migrated = createWeekObject(
         {
+          meetingType: 'midweek',
           weekLabel: legacyMidweek.meetingDate || 'December 4, 2026',
           congregationName: legacyMidweek.congregationName || 'Kingdom Hall',
           chairman: legacyMidweek.chairman || '',
@@ -301,6 +395,7 @@ export function loadWeeks(lang = 'tl') {
 
   const starter = createWeekObject(
     {
+      meetingType: 'midweek',
       weekLabel: 'December 4, 2026',
       congregationName: 'Kingdom Hall',
       chairman: '',

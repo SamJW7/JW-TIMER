@@ -8,4 +8,14 @@ class MainActivity : BridgeActivity() {
         registerPlugin(OverlayPlugin::class.java)
         super.onCreate(savedInstanceState)
     }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        OverlayPlugin.emitLifecycleEvent("APP_LEAVE")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        OverlayPlugin.emitLifecycleEvent("APP_RETURN")
+    }
 }

@@ -1,6 +1,6 @@
 {
   "appId": "com.midweek.meetingtimer",
-  "appName": "Midweek Timer",
+  "appName": "JW Timer",
   "webDir": "dist",
   "server": {
     "androidScheme": "https"

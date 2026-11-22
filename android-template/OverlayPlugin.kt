@@ -26,6 +26,15 @@ class OverlayPlugin : Plugin() {
             }
             plugin.notifyListeners("overlayAction", payload)
         }
+
+        fun emitLifecycleEvent(event: String) {
+            val plugin = instanceRef?.get() ?: return
+            val payload = JSObject().apply {
+                put("event", event)
+                put("hasPermission", Settings.canDrawOverlays(plugin.context))
+            }
+            plugin.notifyListeners("appLifecycle", payload)
+        }
     }
 
     override fun load() {
@@ -110,7 +119,7 @@ class OverlayPlugin : Plugin() {
         val isOvertime = call.getBoolean("isOvertime", false) ?: false
         val isRunning = call.getBoolean("isRunning", false) ?: false
         val isWarning = call.getBoolean("isWarning", false) ?: false
-        val partTitle = call.getString("partTitle", "Midweek Timer") ?: "Midweek Timer"
+        val partTitle = call.getString("partTitle", "JW Timer") ?: "JW Timer"
         val speaker = call.getString("speaker", "") ?: ""
         val section = call.getString("section", "treasures") ?: "treasures"
 

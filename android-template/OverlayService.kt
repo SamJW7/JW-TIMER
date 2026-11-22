@@ -42,7 +42,7 @@ class OverlayService : Service() {
         const val EXTRA_SPEAKER = "speaker"
         const val EXTRA_SECTION = "section"
 
-        private const val NOTIFICATION_CHANNEL_ID = "midweek_timer_overlay_channel"
+        private const val NOTIFICATION_CHANNEL_ID = "jw_timer_overlay_channel"
         private const val NOTIFICATION_ID = 4102
     }
 
@@ -60,7 +60,7 @@ class OverlayService : Service() {
     private var isOvertime: Boolean = false
     private var isWarning: Boolean = false
     private var isRunning: Boolean = false
-    private var partTitle: String = "Midweek Timer"
+    private var partTitle: String = "JW Timer"
     private var speaker: String = ""
     private var section: String = "treasures"
 
@@ -72,7 +72,7 @@ class OverlayService : Service() {
                 if (remainingSeconds < 0) {
                     isOvertime = true
                     isWarning = false
-                } else if (remainingSeconds <= 30) {
+                } else if (remainingSeconds <= 60) {
                     isWarning = true
                 }
                 renderPillState()
@@ -93,6 +93,16 @@ class OverlayService : Service() {
             return START_NOT_STICKY
         }
 
+        if (intent != null) {
+            remainingSeconds = intent.getIntExtra(EXTRA_REMAINING_SECONDS, remainingSeconds)
+            isOvertime = intent.getBooleanExtra(EXTRA_IS_OVERTIME, remainingSeconds < 0)
+            isWarning = intent.getBooleanExtra(EXTRA_IS_WARNING, !isOvertime && remainingSeconds <= 60)
+            isRunning = intent.getBooleanExtra(EXTRA_IS_RUNNING, false)
+            partTitle = intent.getStringExtra(EXTRA_PART_TITLE) ?: partTitle
+            speaker = intent.getStringExtra(EXTRA_SPEAKER) ?: ""
+            section = intent.getStringExtra(EXTRA_SECTION) ?: "treasures"
+        }
+
         val notification = buildForegroundNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
@@ -102,16 +112,6 @@ class OverlayService : Service() {
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
-        }
-
-        if (intent != null) {
-            remainingSeconds = intent.getIntExtra(EXTRA_REMAINING_SECONDS, remainingSeconds)
-            isOvertime = intent.getBooleanExtra(EXTRA_IS_OVERTIME, remainingSeconds < 0)
-            isWarning = intent.getBooleanExtra(EXTRA_IS_WARNING, !isOvertime && remainingSeconds <= 30)
-            isRunning = intent.getBooleanExtra(EXTRA_IS_RUNNING, false)
-            partTitle = intent.getStringExtra(EXTRA_PART_TITLE) ?: partTitle
-            speaker = intent.getStringExtra(EXTRA_SPEAKER) ?: ""
-            section = intent.getStringExtra(EXTRA_SECTION) ?: "treasures"
         }
 
         ensureOverlayAttached()
@@ -145,10 +145,10 @@ class OverlayService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
-                "Midweek Timer Floating Overlay",
+                "JW Timer Floating Overlay",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Keeps the floating meeting timer pill active over other apps"
+                description = "Keeps the JW Timer floating pill active over other apps"
                 setShowBadge(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
@@ -170,7 +170,7 @@ class OverlayService : Service() {
         val pendingIntent = PendingIntent.getActivity(this, 0, openAppIntent, pendingFlags)
 
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Midweek Timer Active")
+            .setContentTitle("JW Timer")
             .setContentText(partTitle)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setOngoing(true)
@@ -240,7 +240,7 @@ class OverlayService : Service() {
             setTypeface(Typeface.DEFAULT_BOLD)
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            maxWidth = dp(145)
+            maxWidth = dp(155)
         }
         titleTextView = titleView
 
@@ -249,7 +249,7 @@ class OverlayService : Service() {
             setTextColor(Color.parseColor("#94A3B8"))
             maxLines = 1
             ellipsize = TextUtils.TruncateAt.END
-            maxWidth = dp(145)
+            maxWidth = dp(155)
         }
         speakerTextView = speakerView
 
@@ -384,7 +384,7 @@ class OverlayService : Service() {
 
         val accentColor = when {
             isOver -> Color.parseColor("#EF4444")
-            isWarning || remainingSeconds <= 30 -> Color.parseColor("#F59E0B")
+            isWarning || remainingSeconds <= 60 -> Color.parseColor("#F59E0B")
             else -> Color.parseColor("#10B981")
         }
 

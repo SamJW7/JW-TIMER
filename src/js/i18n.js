@@ -1,6 +1,6 @@
 export const I18N = {
   en: {
-    appTitle: 'Midweek Timer',
+    appTitle: 'JW Timer',
     navTimer: 'Timer',
     navSchedules: 'Schedules',
     navSettings: 'Settings',
@@ -12,6 +12,7 @@ export const I18N = {
       ministry: 'Apply Yourself to the Field Ministry',
       living: 'Living as Christians',
       concluding: 'Concluding',
+      weekend: 'Weekend Meeting',
     },
     statusOnTime: 'On Time',
     statusWarning: 'Warning',
@@ -20,7 +21,7 @@ export const I18N = {
     elapsed: 'Elapsed',
     partCounter: (idx, total) => `Part ${idx} of ${total}`,
     unassigned: 'Unassigned',
-    asstShort: 'Asst',
+    asstShort: 'Assistant',
     chairmanPrefix: 'Chairman',
     start: 'Start',
     pause: 'Pause',
@@ -30,22 +31,30 @@ export const I18N = {
     reset: 'Reset',
     floatOverlay: 'Float Overlay',
     stopOverlay: 'Hide Overlay',
-    quickAdjust: 'Target Adjust',
+    quickAdjust: 'Quick Adjust',
+    targetAdjustLabel: 'Target',
+    timerAdjustLabel: 'Timer',
     queueHeading: 'Meeting Parts',
+    queueEditBtn: 'Edit',
     resetWeekTimes: 'Reset Week Times',
-    schedulesHeading: 'Weekly Schedules',
-    schedulesSub: 'Scan S-140 / KHS images offline, paste text, or edit weeks manually.',
+    schedulesHeading: 'Meeting Schedules',
+    schedulesSub: 'Manage Midweek & Weekend meeting schedules offline.',
+    schedMidweek: 'Midweek',
+    schedWeekend: 'Weekend',
     uploadImageBtn: 'Upload Schedule Image',
     pasteTextBtn: 'Paste Schedule Text',
     newBlankWeekBtn: 'New Blank Week',
+    newWeekendWeekBtn: '+ New Weekend Schedule (Manual)',
     activeWeekTag: 'Active',
-    useWeekBtn: 'Use Week',
+    useWeekBtn: 'Use Schedule',
     editWeekBtn: 'Edit',
     deleteWeekBtn: 'Delete',
     partsUnit: 'parts',
+    weekendTag: 'Weekend',
+    midweekTag: 'Midweek',
     settingsHeading: 'Settings',
-    settingsSub: 'Language, display, screen wake lock, and vibration alerts.',
-    generalCardTitle: 'Display & Language',
+    settingsSub: 'Language, display, auto-float, screen wake lock, and vibration alerts.',
+    generalCardTitle: 'Display & Behavior',
     settingLangTitle: 'Language',
     settingLangDesc: 'Translates all UI labels and overtime reports.',
     settingThemeTitle: 'Appearance',
@@ -54,6 +63,8 @@ export const I18N = {
     themeLight: 'Light',
     settingAwakeTitle: 'Keep Screen Awake',
     settingAwakeDesc: 'Prevents Android display from sleeping during meetings.',
+    settingAutoFloatTitle: 'Auto-Float When Leaving App',
+    settingAutoFloatDesc: 'Automatically floats the pill over JW Library when a timer is running or paused mid-meeting.',
     vibCardTitle: 'Vibration Alerts',
     testVibration: 'Test Vibration',
     vibMasterTitle: 'Enable Vibration Alerts',
@@ -68,21 +79,24 @@ export const I18N = {
     lbl60Ms: '1:00 (ms)',
     lbl30Ms: '0:30 (ms)',
     lbl0Ms: '0:00 (ms)',
-    editorTitle: 'Edit Week Schedule',
-    editWeekLabel: 'Week Date',
+    editorTitle: 'Edit Schedule',
+    editorScanBtn: 'Scan Image',
+    editorPasteBtn: 'Paste Text',
+    editWeekLabel: 'Meeting Date',
     editWeekCong: 'Congregation',
     editWeekChair: 'Chairman',
-    editorPartsLabel: 'Parts',
+    editorPartsLabel: 'Parts (drag ⋮⋮ to reorder)',
     addPartRow: '+ Add Part',
     cancel: 'Cancel',
-    saveWeek: 'Save Week',
+    saveWeek: 'Save',
+    ocrLoadedToast: 'Schedule scanned — review parts and tap Save.',
     ocrPreviewTitle: 'Review Scanned Schedule',
     ocrMode3Col: 'Parsed via S-140 / KHS 3-column row alignment. Verify before saving.',
     ocrModePlanB: 'Parsed via Plan B adaptive line regex. Edit any row before saving.',
     thPart: 'Part Title',
     thSection: 'Section',
     thMin: 'Min',
-    thSpeaker: 'Speaker',
+    thSpeaker: 'Speaker / Role',
     thAsst: 'Assistant',
     addRow: '+ Add Row',
     saveOcrWeek: 'Save Schedule Week',
@@ -98,8 +112,9 @@ export const I18N = {
     sumPreviewLabel: 'Plain-Text Report (Viber / Messenger Ready)',
     close: 'Close',
     copyReport: 'Copy Plain-Text Report',
-    reportTitle: 'MIDWEEK MEETING TIME REPORT',
-    reportWeek: 'Week',
+    reportTitleMidweek: 'MIDWEEK MEETING TIME REPORT',
+    reportTitleWeekend: 'WEEKEND MEETING TIME REPORT',
+    reportWeek: 'Date',
     reportChairman: 'Chairman',
     reportAllotted: 'Allotted',
     reportActual: 'Actual',
@@ -111,9 +126,9 @@ export const I18N = {
     reportTotalActual: 'Total Actual',
     reportTotalNet: 'Net Variance',
     toastCopied: 'Plain-text report copied to clipboard.',
-    toastWeekSaved: 'Schedule week saved.',
-    toastWeekActivated: 'Active week switched.',
-    toastTimesReset: 'Week times reset.',
+    toastWeekSaved: 'Schedule saved.',
+    toastWeekActivated: 'Active schedule switched.',
+    toastTimesReset: 'Schedule times reset.',
     toastVibTest: 'Vibration test triggered.',
     toastOverlayActive: 'Floating overlay active.',
     toastOverlayStopped: 'Floating overlay closed.',
@@ -122,7 +137,7 @@ export const I18N = {
     toastOcrFailed: 'Could not read image. Try Paste Schedule Text or add parts manually.',
   },
   tl: {
-    appTitle: 'Midweek Timer',
+    appTitle: 'JW Timer',
     navTimer: 'Timer',
     navSchedules: 'Iskedyul',
     navSettings: 'Settings',
@@ -131,9 +146,10 @@ export const I18N = {
     sectionLabels: {
       opening: 'Pambungad',
       treasures: 'Kayamanan Mula sa Salita ng Diyos',
-      ministry: 'Maging Mahusay sa Ministeryo',
+      ministry: 'Maging Mahusay sa Ministeryo sa Larangan',
       living: 'Pamumuhay Bilang Kristiyano',
       concluding: 'Pangwakas',
+      weekend: 'Pulong sa Dulong Sanlinggo',
     },
     statusOnTime: 'Sa Oras',
     statusWarning: 'Babala',
@@ -152,22 +168,30 @@ export const I18N = {
     reset: 'Ulitin',
     floatOverlay: 'Float Overlay',
     stopOverlay: 'Isara ang Overlay',
-    quickAdjust: 'I-adjust ang Takda',
+    quickAdjust: 'Mabilisang Adjust',
+    targetAdjustLabel: 'Takda',
+    timerAdjustLabel: 'Timer',
     queueHeading: 'Mga Bahagi ng Pulong',
+    queueEditBtn: 'I-edit',
     resetWeekTimes: 'I-reset ang Oras',
-    schedulesHeading: 'Mga Lingguhang Iskedyul',
-    schedulesSub: 'Mag-scan ng S-140 / KHS image offline, mag-paste ng text, o mag-edit nang mano-mano.',
+    schedulesHeading: 'Mga Iskedyul ng Pulong',
+    schedulesSub: 'Pamahalaan ang Gitnang Sanlinggo at Dulong Sanlinggo offline.',
+    schedMidweek: 'Gitnang Sanlinggo',
+    schedWeekend: 'Dulong Sanlinggo',
     uploadImageBtn: 'Mag-upload ng Larawan ng Iskedyul',
     pasteTextBtn: 'I-paste ang Teksto',
     newBlankWeekBtn: 'Bagong Linggo',
+    newWeekendWeekBtn: '+ Bagong Iskedyul sa Dulong Sanlinggo (Mano-mano)',
     activeWeekTag: 'Aktibo',
     useWeekBtn: 'Gamitin',
     editWeekBtn: 'I-edit',
     deleteWeekBtn: 'Burahin',
     partsUnit: 'bahagi',
+    weekendTag: 'Dulong Sanlinggo',
+    midweekTag: 'Gitnang Sanlinggo',
     settingsHeading: 'Settings',
-    settingsSub: 'Wika, tema, pagpapanatiling gising ng screen, at vibration alerts.',
-    generalCardTitle: 'Display at Wika',
+    settingsSub: 'Wika, tema, auto-float, pagpapanatiling gising ng screen, at vibration alerts.',
+    generalCardTitle: 'Display at Gawain',
     settingLangTitle: 'Wika',
     settingLangDesc: 'Isinasalin ang lahat ng label at plain-text na ulat.',
     settingThemeTitle: 'Tema',
@@ -176,6 +200,8 @@ export const I18N = {
     themeLight: 'Light',
     settingAwakeTitle: 'Panatilihing Gising ang Screen',
     settingAwakeDesc: 'Pinipigilan ang pagtulog ng screen habang may pulong.',
+    settingAutoFloatTitle: 'Auto-Float Kapag Lumabas sa App',
+    settingAutoFloatDesc: 'Awtomatikong lumulutang ang timer pill sa ibabaw ng JW Library kapag tumatakbo o naka-pause sa gitna ng pulong.',
     vibCardTitle: 'Mga Vibration Alert',
     testVibration: 'Subukan (Test)',
     vibMasterTitle: 'I-on ang Vibration Alerts',
@@ -190,21 +216,24 @@ export const I18N = {
     lbl60Ms: '1:00 (ms)',
     lbl30Ms: '0:30 (ms)',
     lbl0Ms: '0:00 (ms)',
-    editorTitle: 'I-edit ang Lingguhang Iskedyul',
-    editWeekLabel: 'Petsa ng Linggo',
+    editorTitle: 'I-edit ang Iskedyul',
+    editorScanBtn: 'Mag-scan',
+    editorPasteBtn: 'I-paste',
+    editWeekLabel: 'Petsa ng Pulong',
     editWeekCong: 'Kongregasyon',
     editWeekChair: 'Tagapangulo',
-    editorPartsLabel: 'Mga Bahagi',
+    editorPartsLabel: 'Mga Bahagi (i-drag ang ⋮⋮ para ayusin)',
     addPartRow: '+ Magdagdag',
     cancel: 'Kanselahin',
-    saveWeek: 'I-save ang Linggo',
+    saveWeek: 'I-save',
+    ocrLoadedToast: 'Na-scan na ang iskedyul — suriin at pindutin ang I-save.',
     ocrPreviewTitle: 'Suriin ang Na-scan na Iskedyul',
     ocrMode3Col: 'Na-parse gamit ang S-140 / KHS 3-column row alignment. Suriin bago i-save.',
     ocrModePlanB: 'Na-parse gamit ang Plan B adaptive regex. I-edit kung kailangan bago i-save.',
     thPart: 'Pamagat ng Bahagi',
     thSection: 'Seksiyon',
     thMin: 'Min',
-    thSpeaker: 'Tagapagsalita',
+    thSpeaker: 'Tagapagsalita / Tungkulin',
     thAsst: 'Katulong',
     addRow: '+ Magdagdag ng Row',
     saveOcrWeek: 'I-save ang Iskedyul',
@@ -220,8 +249,9 @@ export const I18N = {
     sumPreviewLabel: 'Plain-Text na Ulat (Handa para sa Viber / Messenger)',
     close: 'Isara',
     copyReport: 'Kopyahin ang Plain-Text Report',
-    reportTitle: 'ULAT NG ORAS SA GITNANG SANLINGGO',
-    reportWeek: 'Linggo',
+    reportTitleMidweek: 'ULAT NG ORAS SA GITNANG SANLINGGO',
+    reportTitleWeekend: 'ULAT NG ORAS SA DULONG SANLINGGO',
+    reportWeek: 'Petsa',
     reportChairman: 'Tagapangulo',
     reportAllotted: 'Takda',
     reportActual: 'Aktwal',
@@ -233,9 +263,9 @@ export const I18N = {
     reportTotalActual: 'Kabuuang Aktwal',
     reportTotalNet: 'Kabuuang Diperensya',
     toastCopied: 'Nakopya na ang plain-text na ulat sa clipboard.',
-    toastWeekSaved: 'Na-save na ang lingguhang iskedyul.',
-    toastWeekActivated: 'Napalitan na ang aktibong linggo.',
-    toastTimesReset: 'Na-reset na ang mga oras para sa linggong ito.',
+    toastWeekSaved: 'Na-save na ang iskedyul.',
+    toastWeekActivated: 'Napalitan na ang aktibong iskedyul.',
+    toastTimesReset: 'Na-reset na ang mga oras.',
     toastVibTest: 'Sinusubukan ang vibration.',
     toastOverlayActive: 'Aktibo na ang floating overlay.',
     toastOverlayStopped: 'Isinara ang floating overlay.',
@@ -245,13 +275,95 @@ export const I18N = {
   },
 };
 
+export function isBibleReadingPart(part) {
+  return /pagbabasa|bible\s*reading/i.test(part?.title || '');
+}
+
+export function getContextualRolePlaceholders(part, index = 0) {
+  const title = (part?.title || '').toLowerCase();
+  const section = part?.section || '';
+
+  if (section === 'opening' || section === 'concluding' || title.includes('pambungad') || title.includes('opening') || title.includes('pangwakas') || title.includes('concluding')) {
+    return { speakerPlaceholder: 'Chairman: Name', assistantPlaceholder: '' };
+  }
+  if (isBibleReadingPart(part)) {
+    return { speakerPlaceholder: 'Bible Reader: Name', assistantPlaceholder: '' };
+  }
+  if (section === 'ministry') {
+    const numMatch = title.match(/\b(\d+)\b/);
+    const num = numMatch ? numMatch[1] : index > 0 ? String(index) : '1';
+    return {
+      speakerPlaceholder: `Student ${num}: Name`,
+      assistantPlaceholder: `Assistant ${num}: Name`,
+    };
+  }
+  if (title.includes('pag-aaral') || title.includes('bible study') || title.includes('watchtower') || title.includes('bantayan') || title.includes('cbs')) {
+    return { speakerPlaceholder: 'Conductor: Name', assistantPlaceholder: '' };
+  }
+  return { speakerPlaceholder: 'Speaker: Name', assistantPlaceholder: '' };
+}
+
+function hasRolePrefix(str) {
+  return /^(?:Chairman|Tagapangulo|Speaker(?:\s*\d+)?|Tagapagsalita(?:\s*\d+)?|Gems\s*Conductor|LN\s*Speaker|CBS\s*Conductor|Student\s*Speaker|Bible\s*Reader|Tagabasa\s*sa\s*Bibliya|Student(?:\s*\d+)?|Estudyante(?:\s*\d+)?|Assistant(?:\s*\d+)?|Katulong(?:\s*\d+)?|Conductor|Kondyaktor)\s*:/i.test(
+    str.trim()
+  );
+}
+
 export function formatSpeakerDisplay(part, lang = 'en') {
   const t = I18N[lang] || I18N.en;
-  const spk = (part.speaker || '').trim();
-  const asst = (part.assistant || '').trim();
+  const spk = (part?.speaker || '').trim();
+  const asst = isBibleReadingPart(part) ? '' : (part?.assistant || '').trim();
   if (!spk) return t.unassigned;
-  if (asst && !part.isTalk) {
-    return `${spk} (${t.asstShort}: ${asst})`;
+
+  if (asst && !part?.isTalk) {
+    const formattedAsst = hasRolePrefix(asst) ? asst : `${t.asstShort}: ${asst}`;
+    return `${spk} | ${formattedAsst}`;
   }
   return spk;
+}
+
+export function renderSpeakerToElement(el, part, lang = 'en') {
+  if (!el) return;
+  const t = I18N[lang] || I18N.en;
+  el.textContent = '';
+
+  const spk = (part?.speaker || '').trim();
+  const asst = isBibleReadingPart(part) ? '' : (part?.assistant || '').trim();
+
+  if (!spk) {
+    el.textContent = t.unassigned;
+    return;
+  }
+
+  const appendSegment = (segmentText) => {
+    const m = segmentText.match(/^([^:]{2,26}:)\s*(.+)$/);
+    if (m) {
+      const prefixSpan = document.createElement('span');
+      prefixSpan.className = 'role-prefix';
+      prefixSpan.textContent = `${m[1]} `;
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'role-person';
+      nameSpan.textContent = m[2];
+
+      el.appendChild(prefixSpan);
+      el.appendChild(nameSpan);
+    } else {
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'role-person';
+      nameSpan.textContent = segmentText;
+      el.appendChild(nameSpan);
+    }
+  };
+
+  appendSegment(spk);
+
+  if (asst && !part?.isTalk) {
+    const sep = document.createElement('span');
+    sep.className = 'role-sep';
+    sep.textContent = '|';
+    el.appendChild(sep);
+    const formattedAsst = hasRolePrefix(asst) ? asst : `${t.asstShort}: ${asst}`;
+    appendSegment(formattedAsst);
+  }
 }

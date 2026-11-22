@@ -24,18 +24,29 @@ body.theme-midnight {
   --state-overtime: #ef4444;
   --state-overtime-soft: rgba(239, 68, 68, 0.16);
 
-  /* JW Midweek Section Colors */
-  --sec-opening-fg: #60a5fa;
-  --sec-opening-bg: rgba(37, 99, 235, 0.15);
-  --sec-treasures-fg: #fbbf24;
-  --sec-treasures-bg: rgba(180, 83, 9, 0.2);
-  --sec-ministry-fg: #fb923c;
-  --sec-ministry-bg: rgba(194, 65, 12, 0.22);
-  --sec-living-fg: #f87171;
-  --sec-living-bg: rgba(159, 18, 57, 0.22);
+  /* Official JW 3-Section Colors + Opening/Concluding + Weekend Royal Violet */
+  --sec-opening-accent: #3b82f6;
+  --sec-opening-fg: #93c5fd;
+  --sec-opening-bg: #1e3a8a;
 
-  --nav-backdrop: rgba(9, 16, 32, 0.92);
-  --modal-backdrop: rgba(2, 6, 23, 0.78);
+  --sec-treasures-accent: #2a6f7b;
+  --sec-treasures-fg: #5eead4;
+  --sec-treasures-bg: #134e4a;
+
+  --sec-ministry-accent: #b8860b;
+  --sec-ministry-fg: #fcd34d;
+  --sec-ministry-bg: #78350f;
+
+  --sec-living-accent: #8b1e24;
+  --sec-living-fg: #fda4af;
+  --sec-living-bg: #7f1d1d;
+
+  --sec-weekend-accent: #7c3aed;
+  --sec-weekend-fg: #ddd6fe;
+  --sec-weekend-bg: #4c1d95;
+
+  --nav-backdrop: rgba(9, 16, 32, 0.94);
+  --modal-backdrop: rgba(2, 6, 23, 0.8);
   --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.28);
 
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -67,17 +78,28 @@ body.theme-light {
   --state-overtime: #dc2626;
   --state-overtime-soft: rgba(220, 38, 38, 0.12);
 
-  /* JW Midweek Section Colors - High Contrast Light */
-  --sec-opening-fg: #1e40af;
+  /* Official JW 3-Section Colors - High Contrast Light */
+  --sec-opening-accent: #2563eb;
+  --sec-opening-fg: #1e3a8a;
   --sec-opening-bg: #dbeafe;
-  --sec-treasures-fg: #92400e;
-  --sec-treasures-bg: #fef3c7;
-  --sec-ministry-fg: #9a3412;
-  --sec-ministry-bg: #ffedd5;
-  --sec-living-fg: #991b1b;
+
+  --sec-treasures-accent: #2a6f7b;
+  --sec-treasures-fg: #134e4a;
+  --sec-treasures-bg: #ccfbf1;
+
+  --sec-ministry-accent: #b8860b;
+  --sec-ministry-fg: #78350f;
+  --sec-ministry-bg: #fef3c7;
+
+  --sec-living-accent: #8b1e24;
+  --sec-living-fg: #7f1d1d;
   --sec-living-bg: #ffe4e6;
 
-  --nav-backdrop: rgba(255, 255, 255, 0.94);
+  --sec-weekend-accent: #7c3aed;
+  --sec-weekend-fg: #4c1d95;
+  --sec-weekend-bg: #ede9fe;
+
+  --nav-backdrop: rgba(255, 255, 255, 0.95);
   --modal-backdrop: rgba(15, 23, 42, 0.55);
   --shadow-card: 0 2px 12px rgba(15, 23, 42, 0.06);
 }
@@ -89,11 +111,20 @@ body.theme-light {
   margin: 0;
   padding: 0;
   -webkit-tap-highlight-color: transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
 }
 
 html,
 body {
   height: 100%;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -102,7 +133,6 @@ body {
   color: var(--text-primary);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
   transition: background-color 0.18s ease, color 0.18s ease;
 }
 

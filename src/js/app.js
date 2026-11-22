@@ -1,6 +1,13 @@
-import { I18N, formatSpeakerDisplay } from './i18n.js';
+import {
+  I18N,
+  formatSpeakerDisplay,
+  getContextualRolePlaceholders,
+  isBibleReadingPart,
+  renderSpeakerToElement,
+} from './i18n.js';
 import {
   createDefaultMidweekParts,
+  createDefaultWeekendParts,
   createWeekObject,
   generateId,
   loadActiveWeekId,
@@ -24,11 +31,18 @@ let settings = loadSettings();
 let weeks = loadWeeks(settings.language);
 let activeWeekId = loadActiveWeekId(weeks);
 let currentPartIndex = 0;
-let activeTab = 'timer';
+let schedulesFilterMode = getActiveWeek()?.meetingType || 'midweek';
 
 let editingWeekId = null;
+let editorDraftMeta = {
+  meetingType: 'midweek',
+  weekLabel: '',
+  congregationName: 'Kingdom Hall',
+  chairman: '',
+};
 let editorDraftParts = [];
-let ocrDraft = null;
+let ocrSourceTarget = 'new-week';
+let autofillSourceTarget = 'new-week';
 let toastTimer = null;
 
 const $ = (id) => document.getElementById(id);
@@ -59,8 +73,18 @@ function showToast(msg) {
 }
 
 /* =========================================================
-   TIMER ENGINE & OVERLAY SYNC
+   TIMER ENGINE & AUTO-FLOAT OVERLAY LIFECYCLE
    ========================================================= */
+function isMidMeetingActive() {
+  const part = getActivePart();
+  const week = getActiveWeek();
+  if (!part || !week) return false;
+  if (timerEngine.isRunning) return true;
+  if ((part.actualSeconds || 0) > 0) return true;
+  if (currentPartIndex > 0) return true;
+  return week.parts.some((p) => (p.actualSeconds || 0) > 0);
+}
+
 function buildOverlayPayload() {
   const part = getActivePart();
   if (!part) return null;
@@ -138,6 +162,24 @@ function movePreviousPart() {
   if (payload) AndroidOverlayBridge.syncState(payload);
 }
 
+async function handleAppLeave() {
+  if (!settings.autoFloatOnLeave || !isMidMeetingActive()) return;
+  const payload = buildOverlayPayload();
+  if (!payload) return;
+  const shown = await AndroidOverlayBridge.tryAutoShow(payload);
+  if (shown) renderTimerStage();
+}
+
+async function handleAppReturn() {
+  await AndroidOverlayBridge.hide();
+  if (settings.keepAwake) setKeepScreenAwake(true);
+  const part = getActivePart();
+  if (timerEngine.isRunning && part) {
+    timerEngine.sync(part, settings);
+  }
+  renderTimerStage();
+}
+
 /* =========================================================
    RENDERERS
    ========================================================= */
@@ -156,16 +198,21 @@ function applyThemeAndTranslations() {
   $('txt-next-part').textContent = dict.nextPart;
   $('txt-prev-part').textContent = dict.previous;
   $('txt-reset-part').textContent = dict.reset;
-  $('txt-quick-adjust-label').textContent = dict.quickAdjust;
+  $('txt-target-adjust-label').textContent = dict.targetAdjustLabel;
+  $('txt-timer-adjust-label').textContent = dict.timerAdjustLabel;
   $('txt-view-summary').textContent = dict.overtimeReportBtn;
   $('txt-queue-heading').textContent = dict.queueHeading;
+  $('txt-queue-edit-btn').textContent = dict.queueEditBtn;
   $('txt-reset-week-times').textContent = dict.resetWeekTimes;
 
   $('txt-schedules-heading').textContent = dict.schedulesHeading;
   $('txt-schedules-sub').textContent = dict.schedulesSub;
+  $('btn-sched-midweek').textContent = dict.schedMidweek;
+  $('btn-sched-weekend').textContent = dict.schedWeekend;
   $('txt-upload-ocr').textContent = dict.uploadImageBtn;
   $('txt-open-text-autofill').textContent = dict.pasteTextBtn;
   $('txt-new-blank-week').textContent = dict.newBlankWeekBtn;
+  $('txt-new-weekend-week').textContent = dict.newWeekendWeekBtn;
 
   $('txt-settings-heading').textContent = dict.settingsHeading;
   $('txt-settings-sub').textContent = dict.settingsSub;
@@ -178,6 +225,8 @@ function applyThemeAndTranslations() {
   $('btn-theme-light').textContent = dict.themeLight;
   $('txt-setting-awake-title').textContent = dict.settingAwakeTitle;
   $('txt-setting-awake-desc').textContent = dict.settingAwakeDesc;
+  $('txt-setting-autofloat-title').textContent = dict.settingAutoFloatTitle;
+  $('txt-setting-autofloat-desc').textContent = dict.settingAutoFloatDesc;
 
   $('txt-vib-card-title').textContent = dict.vibCardTitle;
   $('txt-test-vibration').textContent = dict.testVibration;
@@ -195,6 +244,8 @@ function applyThemeAndTranslations() {
   $('txt-lbl-0-ms').textContent = dict.lbl0Ms;
 
   $('txt-editor-drawer-title').textContent = dict.editorTitle;
+  $('txt-editor-scan-btn').textContent = dict.editorScanBtn;
+  $('txt-editor-paste-btn').textContent = dict.editorPasteBtn;
   $('txt-edit-week-label').textContent = dict.editWeekLabel;
   $('txt-edit-week-cong').textContent = dict.editWeekCong;
   $('txt-edit-week-chair').textContent = dict.editWeekChair;
@@ -202,18 +253,6 @@ function applyThemeAndTranslations() {
   $('txt-add-part-row').textContent = dict.addPartRow;
   $('txt-cancel-editor').textContent = dict.cancel;
   $('txt-save-editor').textContent = dict.saveWeek;
-
-  $('txt-ocr-preview-title').textContent = dict.ocrPreviewTitle;
-  $('txt-ocr-week-label').textContent = dict.editWeekLabel;
-  $('txt-ocr-chairman').textContent = dict.editWeekChair;
-  $('th-ocr-part').textContent = dict.thPart;
-  $('th-ocr-section').textContent = dict.thSection;
-  $('th-ocr-min').textContent = dict.thMin;
-  $('th-ocr-speaker').textContent = dict.thSpeaker;
-  $('th-ocr-asst').textContent = dict.thAsst;
-  $('txt-ocr-add-row').textContent = dict.addRow;
-  $('txt-cancel-ocr').textContent = dict.cancel;
-  $('txt-save-ocr').textContent = dict.saveOcrWeek;
 
   $('txt-autofill-title').textContent = dict.autofillTitle;
   $('txt-autofill-sample').textContent = dict.loadSample;
@@ -234,12 +273,12 @@ function applyThemeAndTranslations() {
   $('txt-close-summary').textContent = dict.close;
   $('txt-copy-plain-report').textContent = dict.copyReport;
 
-  // Settings active segmented states
   $('btn-lang-en').classList.toggle('active', settings.language === 'en');
   $('btn-lang-tl').classList.toggle('active', settings.language === 'tl');
   $('btn-theme-midnight').classList.toggle('active', settings.theme !== 'light');
   $('btn-theme-light').classList.toggle('active', settings.theme === 'light');
   $('toggle-keep-awake').checked = Boolean(settings.keepAwake);
+  $('toggle-auto-float').checked = Boolean(settings.autoFloatOnLeave);
 
   const vib = settings.vibration;
   $('toggle-vib-enabled').checked = Boolean(vib.enabled);
@@ -267,7 +306,7 @@ function renderTimerStage() {
   secBadge.className = `section-badge ${part.section}`;
 
   $('timer-part-title').textContent = `${currentPartIndex + 1}. ${part.title}`;
-  $('timer-speaker-line').textContent = formatSpeakerDisplay(part, settings.language);
+  renderSpeakerToElement($('timer-speaker-line'), part, settings.language);
 
   const targetSec = part.plannedMinutes * 60;
   const elapsedSec = part.actualSeconds || 0;
@@ -335,7 +374,7 @@ function renderQueueList() {
     if (p.section !== lastSection) {
       lastSection = p.section;
       const heading = document.createElement('div');
-      heading.className = 'queue-section-label';
+      heading.className = `queue-section-label ${p.section}`;
       heading.textContent = dict.sectionLabels[p.section] || p.section;
       container.appendChild(heading);
     }
@@ -396,9 +435,26 @@ function renderSchedulesGrid() {
   const dict = t();
   const grid = $('weeks-grid');
   if (!grid) return;
-  grid.innerHTML = '';
 
-  weeks.forEach((week) => {
+  $('btn-sched-midweek').classList.toggle('active', schedulesFilterMode === 'midweek');
+  $('btn-sched-weekend').classList.toggle('active', schedulesFilterMode === 'weekend');
+  $('toolbar-midweek').classList.toggle('hidden', schedulesFilterMode !== 'midweek');
+  $('toolbar-weekend').classList.toggle('hidden', schedulesFilterMode !== 'weekend');
+
+  grid.innerHTML = '';
+  const filteredWeeks = weeks.filter((w) => (w.meetingType || 'midweek') === schedulesFilterMode);
+
+  if (filteredWeeks.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'surface-card';
+    empty.innerHTML = `<p class="section-subtitle">${
+      schedulesFilterMode === 'weekend' ? dict.newWeekendWeekBtn : dict.newBlankWeekBtn
+    }</p>`;
+    grid.appendChild(empty);
+    return;
+  }
+
+  filteredWeeks.forEach((week) => {
     const isActive = week.id === activeWeekId;
     const card = document.createElement('article');
     card.className = `week-card${isActive ? ' active-week' : ''}`;
@@ -409,6 +465,13 @@ function renderSchedulesGrid() {
     top.className = 'week-card-top';
 
     const info = document.createElement('div');
+    const badgeRow = document.createElement('div');
+    badgeRow.style.marginBottom = '6px';
+    const typeBadge = document.createElement('span');
+    typeBadge.className = `section-badge ${week.meetingType === 'weekend' ? 'weekend' : 'treasures'}`;
+    typeBadge.textContent = week.meetingType === 'weekend' ? dict.weekendTag : dict.midweekTag;
+    badgeRow.appendChild(typeBadge);
+
     const title = document.createElement('h3');
     title.className = 'week-card-title';
     title.textContent = week.weekLabel;
@@ -417,6 +480,7 @@ function renderSchedulesGrid() {
     meta.className = 'week-card-meta';
     meta.textContent = `${week.parts.length} ${dict.partsUnit} · ${totalMin} min${week.chairman ? ` · ${dict.chairmanPrefix}: ${week.chairman}` : ''}`;
 
+    info.appendChild(badgeRow);
     info.appendChild(title);
     info.appendChild(meta);
     top.appendChild(info);
@@ -490,7 +554,6 @@ function renderAll() {
    TAB SWITCHING
    ========================================================= */
 function switchTab(tabName) {
-  activeTab = tabName;
   ['timer', 'schedules', 'settings'].forEach((name) => {
     $(`tab-${name}`)?.classList.toggle('active', name === tabName);
     $(`nav-btn-${name}`)?.classList.toggle('active', name === tabName);
@@ -498,57 +561,181 @@ function switchTab(tabName) {
 }
 
 /* =========================================================
-   MANUAL EDIT / ADD-PART DRAWER
+   FULL-SCREEN SCHEDULE EDITOR WITH TOUCH DRAG-AND-DROP
    ========================================================= */
+function updateEditorPartBadges() {
+  const list = $('editor-parts-list');
+  if (!list) return;
+  Array.from(list.children).forEach((card, i) => {
+    const badge = card.querySelector('.part-num-badge');
+    if (badge) badge.textContent = `#${i + 1}`;
+  });
+}
+
+function attachCardDragHandlers(handleEl, cardEl, listEl) {
+  handleEl.addEventListener('pointerdown', (startEvent) => {
+    startEvent.preventDefault();
+    startEvent.stopPropagation();
+
+    try {
+      handleEl.setPointerCapture(startEvent.pointerId);
+    } catch {
+      // Ignore if pointer capture is unsupported
+    }
+
+    cardEl.classList.add('dragging');
+    listEl.classList.add('is-dragging');
+
+    const onPointerMove = (moveEvent) => {
+      const y = moveEvent.clientY;
+      const cards = Array.from(listEl.children);
+      const currentIdx = cards.indexOf(cardEl);
+      if (currentIdx === -1) return;
+
+      for (let i = 0; i < cards.length; i++) {
+        if (i === currentIdx) continue;
+        const rect = cards[i].getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+
+        if (i < currentIdx && y < midY) {
+          const [moved] = editorDraftParts.splice(currentIdx, 1);
+          editorDraftParts.splice(i, 0, moved);
+          listEl.insertBefore(cardEl, cards[i]);
+          updateEditorPartBadges();
+          break;
+        }
+        if (i > currentIdx && y > midY) {
+          const [moved] = editorDraftParts.splice(currentIdx, 1);
+          editorDraftParts.splice(i, 0, moved);
+          listEl.insertBefore(cardEl, cards[i].nextSibling);
+          updateEditorPartBadges();
+          break;
+        }
+      }
+    };
+
+    const endDrag = () => {
+      cardEl.classList.remove('dragging');
+      listEl.classList.remove('is-dragging');
+      handleEl.removeEventListener('pointermove', onPointerMove);
+      handleEl.removeEventListener('pointerup', endDrag);
+      handleEl.removeEventListener('pointercancel', endDrag);
+      try {
+        if (handleEl.hasPointerCapture?.(startEvent.pointerId)) {
+          handleEl.releasePointerCapture(startEvent.pointerId);
+        }
+      } catch {
+        // Ignore
+      }
+      renderEditorPartRows();
+    };
+
+    handleEl.addEventListener('pointermove', onPointerMove);
+    handleEl.addEventListener('pointerup', endDrag);
+    handleEl.addEventListener('pointercancel', endDrag);
+  });
+}
+
 function renderEditorPartRows() {
   const dict = t();
   const list = $('editor-parts-list');
+  if (!list) return;
   list.innerHTML = '';
 
+  let ministryNum = 0;
   editorDraftParts.forEach((p, idx) => {
-    const row = document.createElement('div');
-    row.className = 'ocr-progress-box';
+    if (p.section === 'ministry') ministryNum += 1;
+    const placeholders = getContextualRolePlaceholders(p, ministryNum);
+    const showAssistant = p.section === 'ministry' && !isBibleReadingPart(p);
 
-    row.innerHTML = `
-      <div style="display:grid; grid-template-columns: 1fr 140px 82px; gap:8px;">
-        <input type="text" class="input-control" data-field="title" value="${escapeAttr(p.title)}" placeholder="${escapeAttr(dict.thPart)}" />
-        <select class="input-control" data-field="section">
-          <option value="opening" ${p.section === 'opening' ? 'selected' : ''}>${dict.sectionLabels.opening}</option>
-          <option value="treasures" ${p.section === 'treasures' ? 'selected' : ''}>Treasures</option>
-          <option value="ministry" ${p.section === 'ministry' ? 'selected' : ''}>Ministry</option>
-          <option value="living" ${p.section === 'living' ? 'selected' : ''}>Living</option>
-          <option value="concluding" ${p.section === 'concluding' ? 'selected' : ''}>${dict.sectionLabels.concluding}</option>
-        </select>
-        <input type="number" min="1" max="90" class="input-control mono-tabular" data-field="plannedMinutes" value="${p.plannedMinutes}" />
+    const card = document.createElement('div');
+    card.className = 'editor-part-card';
+
+    card.innerHTML = `
+      <div class="editor-row-1">
+        <button type="button" class="part-drag-handle" aria-label="Drag to reorder">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="9" cy="5" r="1.8"/><circle cx="15" cy="5" r="1.8"/>
+            <circle cx="9" cy="12" r="1.8"/><circle cx="15" cy="12" r="1.8"/>
+            <circle cx="9" cy="19" r="1.8"/><circle cx="15" cy="19" r="1.8"/>
+          </svg>
+        </button>
+        <span class="part-num-badge mono-tabular">#${idx + 1}</span>
+        <input type="text" class="input-control part-title-input" data-field="title" value="${escapeAttr(p.title)}" placeholder="${escapeAttr(dict.thPart)}" />
+        <button type="button" class="part-delete-btn" data-remove="1" aria-label="Delete part">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+        </button>
       </div>
-      <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; align-items:center;">
-        <input type="text" class="input-control" data-field="speaker" value="${escapeAttr(p.speaker)}" placeholder="${escapeAttr(dict.thSpeaker)}" />
-        <input type="text" class="input-control" data-field="assistant" value="${escapeAttr(p.assistant)}" placeholder="${escapeAttr(dict.thAsst)}" />
-        <button type="button" class="btn btn-compact btn-ghost" data-remove="1">✕</button>
+
+      <div class="editor-row-2">
+        <select class="input-control section-select sec-${escapeAttr(p.section)}" data-field="section">
+          <option value="opening" ${p.section === 'opening' ? 'selected' : ''}>${escapeHtml(dict.sectionLabels.opening)}</option>
+          <option value="treasures" ${p.section === 'treasures' ? 'selected' : ''}>${escapeHtml(dict.sectionLabels.treasures)}</option>
+          <option value="ministry" ${p.section === 'ministry' ? 'selected' : ''}>${escapeHtml(dict.sectionLabels.ministry)}</option>
+          <option value="living" ${p.section === 'living' ? 'selected' : ''}>${escapeHtml(dict.sectionLabels.living)}</option>
+          <option value="concluding" ${p.section === 'concluding' ? 'selected' : ''}>${escapeHtml(dict.sectionLabels.concluding)}</option>
+          <option value="weekend" ${p.section === 'weekend' ? 'selected' : ''}>${escapeHtml(dict.sectionLabels.weekend)}</option>
+        </select>
+        <div class="minutes-input-wrap">
+          <input type="number" min="1" max="90" class="mono-tabular" data-field="plannedMinutes" value="${p.plannedMinutes}" />
+          <span class="minutes-unit">min</span>
+        </div>
+      </div>
+
+      <div class="editor-row-3">
+        <input type="text" class="input-control" data-field="speaker" value="${escapeAttr(p.speaker || '')}" placeholder="${escapeAttr(placeholders.speakerPlaceholder)}" />
+        ${
+          showAssistant
+            ? `<input type="text" class="input-control" data-field="assistant" value="${escapeAttr(p.assistant || '')}" placeholder="${escapeAttr(placeholders.assistantPlaceholder || 'Assistant: Name')}" />`
+            : ''
+        }
       </div>
     `;
 
-    row.querySelectorAll('[data-field]').forEach((el) => {
-      el.addEventListener('input', () => {
+    card.querySelectorAll('[data-field]').forEach((el) => {
+      const handler = () => {
+        const partIndex = Array.from(list.children).indexOf(card);
+        if (partIndex < 0 || !editorDraftParts[partIndex]) return;
         const field = el.getAttribute('data-field');
+
         if (field === 'plannedMinutes') {
-          editorDraftParts[idx].plannedMinutes = Math.max(1, Number(el.value) || 1);
+          editorDraftParts[partIndex].plannedMinutes = Math.max(1, Math.min(90, Number(el.value) || 1));
+        } else if (field === 'section') {
+          editorDraftParts[partIndex].section = el.value;
+          if (el.value !== 'ministry' || isBibleReadingPart(editorDraftParts[partIndex])) {
+            editorDraftParts[partIndex].assistant = '';
+            editorDraftParts[partIndex].isTalk = true;
+          }
+          renderEditorPartRows();
         } else {
-          editorDraftParts[idx][field] = el.value;
-          if (field === 'assistant') {
-            editorDraftParts[idx].isTalk = !el.value.trim() && editorDraftParts[idx].section !== 'ministry';
+          editorDraftParts[partIndex][field] = el.value;
+          if (field === 'title' && isBibleReadingPart(editorDraftParts[partIndex])) {
+            editorDraftParts[partIndex].assistant = '';
+            editorDraftParts[partIndex].isTalk = true;
+          } else if (field === 'assistant') {
+            editorDraftParts[partIndex].isTalk =
+              !el.value.trim() && editorDraftParts[partIndex].section !== 'ministry';
           }
         }
-      });
+      };
+
+      el.addEventListener('input', handler);
+      if (el.tagName === 'SELECT') el.addEventListener('change', handler);
     });
 
-    row.querySelector('[data-remove]').addEventListener('click', () => {
-      if (editorDraftParts.length <= 1) return;
-      editorDraftParts.splice(idx, 1);
+    card.querySelector('[data-remove]').addEventListener('click', () => {
+      const partIndex = Array.from(list.children).indexOf(card);
+      if (partIndex < 0 || editorDraftParts.length <= 1) return;
+      editorDraftParts.splice(partIndex, 1);
       renderEditorPartRows();
     });
 
-    list.appendChild(row);
+    const dragHandle = card.querySelector('.part-drag-handle');
+    if (dragHandle) {
+      attachCardDragHandlers(dragHandle, card, list);
+    }
+
+    list.appendChild(card);
   });
 }
 
@@ -556,85 +743,51 @@ function openWeekEditorDrawer(weekId) {
   const week = weeks.find((w) => w.id === weekId);
   if (!week) return;
   editingWeekId = weekId;
-  $('edit-week-label').value = week.weekLabel || '';
-  $('edit-week-cong').value = week.congregationName || '';
-  $('edit-week-chairman').value = week.chairman || '';
+  editorDraftMeta = {
+    meetingType: week.meetingType === 'weekend' ? 'weekend' : 'midweek',
+    weekLabel: week.weekLabel || '',
+    congregationName: week.congregationName || 'Kingdom Hall',
+    chairman: week.chairman || '',
+  };
+  $('edit-week-label').value = editorDraftMeta.weekLabel;
+  $('edit-week-cong').value = editorDraftMeta.congregationName;
+  $('edit-week-chairman').value = editorDraftMeta.chairman;
+  $('editor-ocr-banner').classList.add('hidden');
+  $('editor-ocr-progress-box').classList.add('hidden');
+
   editorDraftParts = week.parts.map((p) => ({ ...p }));
   renderEditorPartRows();
   $('drawer-week-editor').classList.add('open');
 }
 
+function openScannedDraftInEditor(scanResult) {
+  const dict = t();
+  editingWeekId = null;
+  editorDraftMeta = {
+    meetingType: 'midweek',
+    weekLabel: scanResult.weekLabel || 'December 4, 2026',
+    congregationName: getActiveWeek()?.congregationName || 'Kingdom Hall',
+    chairman: scanResult.chairman || '',
+  };
+  $('edit-week-label').value = editorDraftMeta.weekLabel;
+  $('edit-week-cong').value = editorDraftMeta.congregationName;
+  $('edit-week-chairman').value = editorDraftMeta.chairman;
+
+  const banner = $('editor-ocr-banner');
+  banner.textContent = scanResult.modeUsed === '3-column' ? dict.ocrMode3Col : dict.ocrModePlanB;
+  banner.classList.remove('hidden');
+  $('editor-ocr-progress-box').classList.add('hidden');
+
+  editorDraftParts = (scanResult.parts || []).map((p, i) => normalizePart(p, i));
+  renderEditorPartRows();
+  $('drawer-week-editor').classList.add('open');
+  showToast(dict.ocrLoadedToast);
+}
+
 function closeWeekEditorDrawer() {
   $('drawer-week-editor').classList.remove('open');
+  $('editor-ocr-progress-box').classList.add('hidden');
   editingWeekId = null;
-}
-
-/* =========================================================
-   OFFLINE OCR PREVIEW MODAL
-   ========================================================= */
-function renderOcrPreviewTable() {
-  const dict = t();
-  const tbody = $('ocr-preview-tbody');
-  tbody.innerHTML = '';
-
-  (ocrDraft?.parts || []).forEach((p, idx) => {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td><input type="text" class="input-control" data-ocr="title" value="${escapeAttr(p.title)}" /></td>
-      <td>
-        <select class="input-control" data-ocr="section">
-          <option value="opening" ${p.section === 'opening' ? 'selected' : ''}>Opening</option>
-          <option value="treasures" ${p.section === 'treasures' ? 'selected' : ''}>Treasures</option>
-          <option value="ministry" ${p.section === 'ministry' ? 'selected' : ''}>Ministry</option>
-          <option value="living" ${p.section === 'living' ? 'selected' : ''}>Living</option>
-          <option value="concluding" ${p.section === 'concluding' ? 'selected' : ''}>Concluding</option>
-        </select>
-      </td>
-      <td><input type="number" min="1" max="90" class="input-control mono-tabular" data-ocr="plannedMinutes" value="${p.plannedMinutes}" /></td>
-      <td><input type="text" class="input-control" data-ocr="speaker" value="${escapeAttr(p.speaker)}" /></td>
-      <td><input type="text" class="input-control" data-ocr="assistant" value="${escapeAttr(p.assistant)}" /></td>
-      <td><button type="button" class="btn btn-compact btn-ghost" data-ocr-del="1">✕</button></td>
-    `;
-
-    tr.querySelectorAll('[data-ocr]').forEach((el) => {
-      el.addEventListener('input', () => {
-        const f = el.getAttribute('data-ocr');
-        if (f === 'plannedMinutes') {
-          ocrDraft.parts[idx].plannedMinutes = Math.max(1, Number(el.value) || 1);
-        } else {
-          ocrDraft.parts[idx][f] = el.value;
-          if (f === 'assistant') {
-            ocrDraft.parts[idx].isTalk = !el.value.trim() && ocrDraft.parts[idx].section !== 'ministry';
-          }
-        }
-      });
-    });
-
-    tr.querySelector('[data-ocr-del]').addEventListener('click', () => {
-      ocrDraft.parts.splice(idx, 1);
-      renderOcrPreviewTable();
-    });
-
-    tbody.appendChild(tr);
-  });
-}
-
-function openOcrPreviewModal(scanResult) {
-  const dict = t();
-  ocrDraft = {
-    modeUsed: scanResult.modeUsed,
-    weekLabel: scanResult.weekLabel || 'December 4, 2026',
-    chairman: scanResult.chairman || '',
-    parts: (scanResult.parts || []).map((p, i) => normalizePart(p, i)),
-  };
-
-  $('ocr-mode-note').textContent =
-    scanResult.modeUsed === '3-column' ? dict.ocrMode3Col : dict.ocrModePlanB;
-  $('ocr-week-label').value = ocrDraft.weekLabel;
-  $('ocr-chairman').value = ocrDraft.chairman;
-
-  renderOcrPreviewTable();
-  $('modal-ocr-preview').classList.add('open');
 }
 
 /* =========================================================
@@ -706,7 +859,6 @@ function updateTextAutofillPreview() {
    INITIALIZATION & EVENT WIRING
    ========================================================= */
 function bindEvents() {
-  // Bottom 3-tab navigation
   ['timer', 'schedules', 'settings'].forEach((tab) => {
     $(`nav-btn-${tab}`).addEventListener('click', () => switchTab(tab));
   });
@@ -726,6 +878,8 @@ function bindEvents() {
     saveWeeks(weeks, activeWeekId);
     renderTimerStage();
     renderQueueList();
+    const payload = buildOverlayPayload();
+    if (payload) AndroidOverlayBridge.syncState(payload);
   });
   $('btn-min-plus').addEventListener('click', () => {
     const part = getActivePart();
@@ -734,6 +888,22 @@ function bindEvents() {
     saveWeeks(weeks, activeWeekId);
     renderTimerStage();
     renderQueueList();
+    const payload = buildOverlayPayload();
+    if (payload) AndroidOverlayBridge.syncState(payload);
+  });
+  $('btn-sec-minus').addEventListener('click', () => {
+    const part = getActivePart();
+    if (!part) return;
+    timerEngine.adjustRemainingSeconds(part, -30, settings);
+  });
+  $('btn-sec-plus').addEventListener('click', () => {
+    const part = getActivePart();
+    if (!part) return;
+    timerEngine.adjustRemainingSeconds(part, 30, settings);
+  });
+  $('btn-edit-active-week').addEventListener('click', () => {
+    const week = getActiveWeek();
+    if (week) openWeekEditorDrawer(week.id);
   });
   $('btn-reset-week-times').addEventListener('click', () => {
     const week = getActiveWeek();
@@ -749,6 +919,8 @@ function bindEvents() {
     saveWeeks(weeks, activeWeekId);
     renderTimerStage();
     renderQueueList();
+    const payload = buildOverlayPayload();
+    if (payload) AndroidOverlayBridge.syncState(payload);
     showToast(t().toastTimesReset);
   });
 
@@ -777,27 +949,69 @@ function bindEvents() {
     showToast(t().toastCopied);
   });
 
-  // Schedules tab actions
-  $('btn-upload-ocr').addEventListener('click', () => $('ocr-image-input').click());
+  // Schedules tab segmented toggle (Midweek / Weekend)
+  $('btn-sched-midweek').addEventListener('click', () => {
+    schedulesFilterMode = 'midweek';
+    renderSchedulesGrid();
+  });
+  $('btn-sched-weekend').addEventListener('click', () => {
+    schedulesFilterMode = 'weekend';
+    renderSchedulesGrid();
+  });
+
+  // Midweek Schedules OCR upload + Inline Editor Scan
+  $('btn-upload-ocr').addEventListener('click', () => {
+    ocrSourceTarget = 'new-week';
+    $('ocr-image-input').click();
+  });
+  $('btn-editor-scan-image').addEventListener('click', () => {
+    ocrSourceTarget = 'replace-editor';
+    $('ocr-image-input').click();
+  });
+
   $('ocr-image-input').addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
 
-    const progressBox = $('ocr-progress-box');
+    const isInlineEditor = ocrSourceTarget === 'replace-editor';
+    const progressBox = isInlineEditor ? $('editor-ocr-progress-box') : $('ocr-progress-box');
+    const statusTextEl = isInlineEditor ? $('editor-ocr-status-text') : $('ocr-status-text');
+    const pctEl = isInlineEditor ? $('editor-ocr-progress-pct') : $('ocr-progress-pct');
+    const barEl = isInlineEditor ? $('editor-ocr-progress-bar') : $('ocr-progress-bar');
+
     progressBox.classList.remove('hidden');
-    $('ocr-status-text').textContent = t().toastOcrInit;
-    $('ocr-progress-pct').textContent = '0%';
-    $('ocr-progress-bar').style.width = '0%';
+    statusTextEl.textContent = t().toastOcrInit;
+    pctEl.textContent = '0%';
+    barEl.style.width = '0%';
 
     try {
       const scanResult = await scanScheduleImageOffline(file, ({ status, progress }) => {
-        $('ocr-status-text').textContent = status;
-        $('ocr-progress-pct').textContent = `${progress}%`;
-        $('ocr-progress-bar').style.width = `${progress}%`;
+        statusTextEl.textContent = status;
+        pctEl.textContent = `${progress}%`;
+        barEl.style.width = `${progress}%`;
       });
       progressBox.classList.add('hidden');
-      openOcrPreviewModal(scanResult);
+
+      if (isInlineEditor) {
+        const dict = t();
+        if (scanResult.weekLabel) {
+          editorDraftMeta.weekLabel = scanResult.weekLabel;
+          $('edit-week-label').value = scanResult.weekLabel;
+        }
+        if (scanResult.chairman) {
+          editorDraftMeta.chairman = scanResult.chairman;
+          $('edit-week-chairman').value = scanResult.chairman;
+        }
+        editorDraftParts = (scanResult.parts || []).map((p, i) => normalizePart(p, i));
+        const banner = $('editor-ocr-banner');
+        banner.textContent = scanResult.modeUsed === '3-column' ? dict.ocrMode3Col : dict.ocrModePlanB;
+        banner.classList.remove('hidden');
+        renderEditorPartRows();
+        showToast(dict.ocrLoadedToast);
+      } else {
+        openScannedDraftInEditor(scanResult);
+      }
     } catch (err) {
       console.error('Offline OCR failed:', err);
       progressBox.classList.add('hidden');
@@ -808,6 +1022,7 @@ function bindEvents() {
   $('btn-new-blank-week').addEventListener('click', () => {
     const newWeek = createWeekObject(
       {
+        meetingType: 'midweek',
         weekLabel: settings.language === 'tl' ? 'Bagong Linggo' : 'New Schedule Week',
         congregationName: getActiveWeek()?.congregationName || 'Kingdom Hall',
         chairman: '',
@@ -821,15 +1036,35 @@ function bindEvents() {
     openWeekEditorDrawer(newWeek.id);
   });
 
-  // Manual Week Editor Drawer
-  $('btn-close-editor-drawer').addEventListener('click', closeWeekEditorDrawer);
+  // Weekend Schedule manual creator
+  $('btn-new-weekend-week').addEventListener('click', () => {
+    const newWeekend = createWeekObject(
+      {
+        meetingType: 'weekend',
+        weekLabel: settings.language === 'tl' ? 'Dulong Sanlinggo' : 'Weekend Meeting',
+        congregationName: getActiveWeek()?.congregationName || 'Kingdom Hall',
+        chairman: '',
+        parts: createDefaultWeekendParts(settings.language),
+      },
+      settings.language
+    );
+    weeks.unshift(newWeekend);
+    activeWeekId = newWeekend.id;
+    currentPartIndex = 0;
+    saveWeeks(weeks, activeWeekId);
+    renderAll();
+    openWeekEditorDrawer(newWeekend.id);
+  });
+
+  // Full-Screen Schedule Editor controls
   $('btn-cancel-editor-drawer').addEventListener('click', closeWeekEditorDrawer);
   $('btn-add-part-row').addEventListener('click', () => {
+    const defaultSection = editorDraftMeta.meetingType === 'weekend' ? 'weekend' : 'living';
     editorDraftParts.push(
       normalizePart({
         id: generateId('part'),
         title: settings.language === 'tl' ? 'Bagong Bahagi' : 'New Part',
-        section: 'living',
+        section: defaultSection,
         speaker: '',
         assistant: '',
         plannedMinutes: 5,
@@ -838,56 +1073,58 @@ function bindEvents() {
     renderEditorPartRows();
   });
   $('btn-save-editor-drawer').addEventListener('click', () => {
-    const week = weeks.find((w) => w.id === editingWeekId);
-    if (!week) return;
-    week.weekLabel = $('edit-week-label').value.trim() || week.weekLabel;
-    week.congregationName = $('edit-week-cong').value.trim() || 'Kingdom Hall';
-    week.chairman = $('edit-week-chairman').value.trim();
-    week.parts = editorDraftParts.map((p, idx) => normalizePart(p, idx));
-    saveWeeks(weeks, activeWeekId);
-    closeWeekEditorDrawer();
-    renderAll();
-    showToast(t().toastWeekSaved);
-  });
+    const nextLabel = $('edit-week-label').value.trim();
+    const nextCong = $('edit-week-cong').value.trim() || 'Kingdom Hall';
+    const nextChairman = $('edit-week-chairman').value.trim();
+    const normalizedParts = editorDraftParts.map((p, idx) => normalizePart(p, idx));
 
-  // OCR Preview Modal
-  $('btn-close-ocr-preview').addEventListener('click', () => $('modal-ocr-preview').classList.remove('open'));
-  $('btn-cancel-ocr-preview').addEventListener('click', () => $('modal-ocr-preview').classList.remove('open'));
-  $('btn-ocr-add-row').addEventListener('click', () => {
-    if (!ocrDraft) return;
-    ocrDraft.parts.push(
-      normalizePart({
-        id: generateId('part'),
-        title: 'New Part',
-        section: 'ministry',
-        plannedMinutes: 4,
-      })
-    );
-    renderOcrPreviewTable();
-  });
-  $('btn-save-ocr-week').addEventListener('click', () => {
-    if (!ocrDraft) return;
+    if (editingWeekId) {
+      const week = weeks.find((w) => w.id === editingWeekId);
+      if (!week) return;
+      week.weekLabel = nextLabel || week.weekLabel;
+      week.congregationName = nextCong;
+      week.chairman = nextChairman;
+      week.parts = normalizedParts;
+      saveWeeks(weeks, activeWeekId);
+      closeWeekEditorDrawer();
+      renderAll();
+      const payload = buildOverlayPayload();
+      if (payload) AndroidOverlayBridge.syncState(payload);
+      showToast(t().toastWeekSaved);
+      return;
+    }
+
     const savedWeek = createWeekObject(
       {
-        weekLabel: $('ocr-week-label').value.trim() || ocrDraft.weekLabel,
-        congregationName: getActiveWeek()?.congregationName || 'Kingdom Hall',
-        chairman: $('ocr-chairman').value.trim(),
-        parts: ocrDraft.parts,
+        meetingType: editorDraftMeta.meetingType || 'midweek',
+        weekLabel: nextLabel || editorDraftMeta.weekLabel || 'December 4, 2026',
+        congregationName: nextCong,
+        chairman: nextChairman,
+        parts: normalizedParts,
       },
       settings.language
     );
     weeks.unshift(savedWeek);
     activeWeekId = savedWeek.id;
     currentPartIndex = 0;
+    schedulesFilterMode = savedWeek.meetingType;
     saveWeeks(weeks, activeWeekId);
-    $('modal-ocr-preview').classList.remove('open');
+    closeWeekEditorDrawer();
     renderAll();
     switchTab('timer');
+    const payload = buildOverlayPayload();
+    if (payload) AndroidOverlayBridge.syncState(payload);
     showToast(t().toastWeekSaved);
   });
 
-  // Text Auto-Fill Modal
+  // Text Auto-Fill Modal (supports Schedules new week AND Editor inline replacement)
   $('btn-open-text-autofill').addEventListener('click', () => {
+    autofillSourceTarget = 'new-week';
+    updateTextAutofillPreview();
+    $('modal-text-autofill').classList.add('open');
+  });
+  $('btn-editor-paste-text').addEventListener('click', () => {
+    autofillSourceTarget = 'replace-editor';
     updateTextAutofillPreview();
     $('modal-text-autofill').classList.add('open');
   });
@@ -904,18 +1141,18 @@ CONGREGATION: Kingdom Hall Central
 CHAIRMAN: Brother Cruz
 
 1. KAYAMANAN MULA SA SALITA NG DIYOS
-Speaker: Brother Santos
+Speaker: Juan Dela Cruz
 Gems Conductor: Brother Reyes
-Bible Reader: Brother Lim
+Bible Reader: Pedro Reyes
 
 2. MAGING MAHUSAY SA MINISTERYO
 Part 1: Pagpapasimula ng Pakikipag-usap
-Student: Student 1
-Assistant: Assistant 1
+Student 1: Shaevi Lei Lizada
+Assistant 1: Carol Combis
 
 Part 2: Pakikipag-usap Muli
-Student: Student 2
-Assistant: Assistant 2
+Student 2: Maria Santos
+Assistant 2: Ana Lim
 
 3. PAMUMUHAY BILANG KRISTIYANO
 Lokal na Pangangailangan: Brother Dela Cruz
@@ -926,12 +1163,33 @@ Tagabasa sa Pag-aaral: Brother Tan`;
   $('btn-apply-text-autofill').addEventListener('click', () => {
     const parsed = parseMeetingScheduleText($('autofill-textarea').value, settings.language);
     if (!parsed) return;
+    $('modal-text-autofill').classList.remove('open');
+
+    if (autofillSourceTarget === 'replace-editor') {
+      if (parsed.weekLabel) {
+        editorDraftMeta.weekLabel = parsed.weekLabel;
+        $('edit-week-label').value = parsed.weekLabel;
+      }
+      if (parsed.congregationName) {
+        editorDraftMeta.congregationName = parsed.congregationName;
+        $('edit-week-cong').value = parsed.congregationName;
+      }
+      if (parsed.chairman) {
+        editorDraftMeta.chairman = parsed.chairman;
+        $('edit-week-chairman').value = parsed.chairman;
+      }
+      editorDraftParts = (parsed.parts || []).map((p, i) => normalizePart(p, i));
+      renderEditorPartRows();
+      showToast(t().ocrLoadedToast);
+      return;
+    }
+
     const savedWeek = createWeekObject(parsed, settings.language);
     weeks.unshift(savedWeek);
     activeWeekId = savedWeek.id;
     currentPartIndex = 0;
+    schedulesFilterMode = 'midweek';
     saveWeeks(weeks, activeWeekId);
-    $('modal-text-autofill').classList.remove('open');
     renderAll();
     switchTab('timer');
     showToast(t().toastWeekSaved);
@@ -962,6 +1220,10 @@ Tagabasa sa Pag-aaral: Brother Tan`;
     settings.keepAwake = e.target.checked;
     saveSettings(settings);
     setKeepScreenAwake(settings.keepAwake);
+  });
+  $('toggle-auto-float').addEventListener('change', (e) => {
+    settings.autoFloatOnLeave = e.target.checked;
+    saveSettings(settings);
   });
 
   // Vibration Settings
@@ -1006,27 +1268,34 @@ Tagabasa sa Pag-aaral: Brother Tan`;
     showToast(t().toastVibTest);
   });
 
-  // Native Android Overlay Commands
-  initOverlayListeners((action) => {
-    if (action === 'PLAY_PAUSE') {
-      toggleStartPause();
-    } else if (action === 'NEXT_PART') {
-      advanceNextPartManual();
-    } else if (action === 'RETURN_TO_APP' || action === 'OPEN_APP') {
-      switchTab('timer');
-      window.focus();
-    }
-  });
-
-  // Keep Wake Lock & drift-free timer synced when returning from background/overlay
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      if (settings.keepAwake) setKeepScreenAwake(true);
-      const part = getActivePart();
-      if (timerEngine.isRunning && part) {
-        timerEngine.sync(part, settings);
-        renderTimerStage();
+  // Native Android Overlay Commands & Lifecycle Hooks
+  initOverlayListeners(
+    (action) => {
+      if (action === 'PLAY_PAUSE') {
+        toggleStartPause();
+      } else if (action === 'NEXT_PART') {
+        advanceNextPartManual();
+      } else if (action === 'RETURN_TO_APP' || action === 'OPEN_APP') {
+        switchTab('timer');
+        handleAppReturn();
+        window.focus();
       }
+    },
+    (lifecycleEvent) => {
+      if (lifecycleEvent === 'APP_LEAVE') {
+        handleAppLeave();
+      } else if (lifecycleEvent === 'APP_RETURN') {
+        handleAppReturn();
+      }
+    }
+  );
+
+  // WebView visibilitychange fallback for Auto-Float & timer sync
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      handleAppLeave();
+    } else if (document.visibilityState === 'visible') {
+      handleAppReturn();
     }
   });
 }

@@ -1,36 +1,202 @@
 import { createWorker } from 'tesseract.js';
-import { createDefaultMidweekParts, generateId, inferSectionFromTitle, normalizePart } from './storage.js';
+import {
+  createDefaultMidweekParts,
+  generateId,
+  inferSectionFromTitle,
+  normalizePart,
+  sanitizeRoleValue,
+} from './storage.js';
 
 const SKIP_SONG_RE = /(?:^|\b)(?:awit(?:\s+blg\.?)?|song(?:\s+no\.?)?)\s*\d*\b/i;
 const SKIP_PRAYER_RE = /\b(?:panalangin|opening\s+prayer|closing\s+prayer|prayer)\b/i;
-const SKIP_CBS_READER_RE = /\b(?:cbs\s+reader|congregation\s+bible\s+study\s+reader|tagabasa\s+sa\s+pag-aaral|tagabasa(?:\s+ng\s+bantayan)?)\b/i;
-const PURE_READER_RE = /^reader\b[:\s-]*/i;
+const SKIP_READER_RE = /\b(?:cbs\s+reader|watchtower\s+reader|congregation\s+bible\s+study\s+reader|tagabasa(?:\s+sa\s+pag-aaral|\s+ng\s+bantayan)?)\b/i;
+const PURE_READER_RE = /^reader\s*[:\-]/i;
+
+const OPENING_COMMENT_RE = /pambungad\s+na\s+komento|opening\s+comments?/i;
+const CONCLUDING_COMMENT_RE = /pangwakas\s+na\s+komento|concluding\s+comments?|closing\s+comments?/i;
+
+const ROLE_ENTRY_RE =
+  /(Chairman|Tagapangulo|LN\s*Speaker|CBS\s*Conductor|Gems\s*Conductor|Student\s*Speaker|Speaker(?:\s*\d+)?|Tagapagsalita(?:\s*\d+)?|Bible\s*Reader|Tagabasa\s*sa\s*Bibliya|Student(?:\s*\d+)?|Estudyante(?:\s*\d+)?|Assistant(?:\s*\d+)?|Katulong(?:\s*\d+)?|Conductor|Kondyaktor)\s*[:\-]\s*/gi;
+
+const SUBLINE_DESCRIPTION_RE =
+  /^(?:tema|theme|kabanata|chap\.?|chapter|aralin|lesson|bahay-bahay|impormal|di-pormal|pagdalaw-muli|paggawa\s+ng\s+mga\s+alagad|\(?(?:lmd|th|bt|lff|scl|w\d+|mwb)\b|\d+\s+min\s+or\s+less)/i;
+const SCRIPTURE_REF_ONLY_RE = /^[1-3]?\s*[A-Za-zÀ-ÿ]+\s+\d{1,3}\s*:\s*\d{1,3}(?:\s*[-–]\s*\d{1,3})?\.?$/i;
+
+/* =========================================================
+   OFFSCREEN HTML5 CANVAS PRE-PROCESSING (100% OFFLINE)
+   2x Scale + High-Contrast Grayscale Luminance Enhancement
+   ========================================================= */
+async function loadDrawableImage(file) {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file);
+      return {
+        drawable: bitmap,
+        width: bitmap.width,
+        height: bitmap.height,
+        cleanup: () => bitmap.close?.(),
+      };
+    } catch {
+      // Fallback to HTMLImageElement below
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      resolve({
+        drawable: img,
+        width: img.naturalWidth || img.width,
+        height: img.naturalHeight || img.height,
+        cleanup: () => URL.revokeObjectURL(objectUrl),
+      });
+    };
+    img.onerror = (err) => {
+      URL.revokeObjectURL(objectUrl);
+      reject(err);
+    };
+    img.src = objectUrl;
+  });
+}
+
+async function preprocessImageForOcr(imageFile) {
+  const { drawable, width, height, cleanup } = await loadDrawableImage(imageFile);
+  try {
+    // 2x upscale capped sensibly to protect low-RAM Android WebViews on ultra-tall captures
+    const maxDim = 4800;
+    let scale = 2;
+    if (width * scale > maxDim || height * scale > maxDim) {
+      scale = Math.max(1.2, Math.min(maxDim / Math.max(1, width), maxDim / Math.max(1, height)));
+    }
+
+    const targetW = Math.max(1, Math.round(width * scale));
+    const targetH = Math.max(1, Math.round(height * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = targetW;
+    canvas.height = targetH;
+
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return imageFile;
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, targetW, targetH);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    const supportsFilter = typeof ctx.filter === 'string';
+    if (supportsFilter) {
+      ctx.filter = 'grayscale(100%) contrast(160%)';
+      ctx.drawImage(drawable, 0, 0, targetW, targetH);
+      ctx.filter = 'none';
+    } else {
+      ctx.drawImage(drawable, 0, 0, targetW, targetH);
+      const imgData = ctx.getImageData(0, 0, targetW, targetH);
+      const px = imgData.data;
+      const contrast = 1.6;
+      for (let i = 0; i < px.length; i += 4) {
+        const lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+        const enhanced = Math.min(255, Math.max(0, (lum - 128) * contrast + 128));
+        px[i] = enhanced;
+        px[i + 1] = enhanced;
+        px[i + 2] = enhanced;
+      }
+      ctx.putImageData(imgData, 0, 0);
+    }
+
+    return canvas;
+  } finally {
+    cleanup();
+  }
+}
+
+/* =========================================================
+   ROW & COMMENT / BANNER DETECTION HELPERS
+   ========================================================= */
+function extractCommentFromMixedRow(text) {
+  const raw = (text || '').trim();
+  if (!raw) return null;
+
+  if (OPENING_COMMENT_RE.test(raw)) {
+    const isEn = /opening\s+comments?/i.test(raw) && !/pambungad/i.test(raw);
+    return {
+      title: isEn ? 'Opening Comments' : 'Pambungad na Komento',
+      section: 'opening',
+    };
+  }
+
+  if (CONCLUDING_COMMENT_RE.test(raw)) {
+    const isEn = /concluding\s+comments?|closing\s+comments?/i.test(raw) && !/pangwakas/i.test(raw);
+    return {
+      title: isEn ? 'Concluding Comments' : 'Pangwakas na Komento',
+      section: 'concluding',
+    };
+  }
+
+  return null;
+}
 
 function isSkippedRow(title) {
   const clean = (title || '').trim();
   if (!clean) return false;
+  // Never skip if the row also carries Opening/Concluding Comments alongside Song & Prayer
+  if (extractCommentFromMixedRow(clean)) return false;
   if (SKIP_SONG_RE.test(clean)) return true;
   if (SKIP_PRAYER_RE.test(clean)) return true;
-  if (SKIP_CBS_READER_RE.test(clean)) return true;
+  if (SKIP_READER_RE.test(clean)) return true;
   if (PURE_READER_RE.test(clean)) return true;
   return false;
 }
 
+function isBibleReading(title) {
+  return /pagbabasa|bible\s*reading/i.test(title || '');
+}
+
+function isDescriptionSubLine(text) {
+  const clean = (text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return false;
+  if (new RegExp(ROLE_ENTRY_RE.source, 'i').test(clean)) return false;
+  if (SUBLINE_DESCRIPTION_RE.test(clean)) return true;
+  if (SCRIPTURE_REF_ONLY_RE.test(clean)) return true;
+  return false;
+}
+
 function detectSectionHeader(text) {
-  const up = (text || '').toUpperCase();
-  if (up.includes('KAYAMANAN') || up.includes('TREASURES FROM GOD')) return 'treasures';
-  if (up.includes('MINISTERYO') || up.includes('FIELD MINISTRY') || up.includes('APPLY YOURSELF')) return 'ministry';
-  if (up.includes('PAMUMUHAY') || up.includes('LIVING AS CHRISTIANS')) return 'living';
+  const up = (text || '').toUpperCase().replace(/[^A-Z0-9'\s]/g, ' ');
+  if (
+    up.includes('KAYAMANAN') ||
+    up.includes('SALITA NG DIYOS') ||
+    up.includes('TREASURES FROM GOD')
+  ) {
+    return 'treasures';
+  }
+  if (
+    up.includes('MAHUSAY SA MINISTERYO') ||
+    up.includes('MINISTERYO SA LARANGAN') ||
+    up.includes('FIELD MINISTRY') ||
+    up.includes('APPLY YOURSELF')
+  ) {
+    return 'ministry';
+  }
+  if (
+    up.includes('PAMUMUHAY BILANG KRISTIYANO') ||
+    up.includes('PAMUMUHAY') ||
+    up.includes('LIVING AS CHRISTIANS')
+  ) {
+    return 'living';
+  }
   return null;
 }
 
 function isPureSectionHeader(text) {
-  const clean = (text || '').replace(/[^a-zA-Z\s']/g, '').trim().toUpperCase();
+  const clean = (text || '').replace(/[^a-zA-Z\s']/g, '').replace(/\s+/g, ' ').trim().toUpperCase();
   return (
     clean === 'KAYAMANAN MULA SA SALITA NG DIYOS' ||
     clean === "TREASURES FROM GOD'S WORD" ||
     clean === 'TREASURES FROM GODS WORD' ||
     clean === 'MAGING MAHUSAY SA MINISTERYO' ||
+    clean === 'MAGING MAHUSAY SA MINISTERYO SA LARANGAN' ||
     clean === 'APPLY YOURSELF TO THE FIELD MINISTRY' ||
     clean === 'PAMUMUHAY BILANG KRISTIYANO' ||
     clean === 'LIVING AS CHRISTIANS'
@@ -39,49 +205,195 @@ function isPureSectionHeader(text) {
 
 function cleanPartTitle(rawTitle) {
   return (rawTitle || '')
-    .replace(/^\d+[.)]\s*/, '')
-    .replace(/^\(\d{1,2}\s*(?:min\.?|mins?\.?|minuto)\)\s*/i, '')
-    .replace(/\(\d{1,2}\s*(?:min\.?|mins?\.?|minuto)\)/gi, '')
+    .replace(/^\d{1,2}\s*[.):\-]\s*/, '')
+    .replace(/^\d{1,2}\s+(?=[A-Za-zÀ-ÿ])/, '')
+    .replace(/^\(\d{1,2}\s*(?:min\.?|mins?\.?|minuto|mln\.?|rnin\.?)\)\s*/i, '')
+    .replace(/\(?\d{1,2}\s*(?:min\.?|mins?\.?|minuto|mln\.?|rnin\.?)\)?/gi, '')
+    .replace(/[|•·]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-function splitSpeakerAndAssistant(rawNames, section, title) {
-  let clean = (rawNames || '').replace(/\s+/g, ' ').trim();
-  if (!clean) return { speaker: '', assistant: '' };
+function normalizeRoleLabel(label) {
+  const low = label.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (low.startsWith('chairman') || low.startsWith('tagapangulo')) return 'Chairman';
+  if (low.startsWith('ln')) return 'LN Speaker';
+  if (low.startsWith('cbs')) return 'CBS Conductor';
+  if (low.startsWith('gems')) return 'Gems Conductor';
+  if (low.startsWith('student speaker')) return 'Student Speaker';
+  if (low.startsWith('bible') || low.includes('bibliya')) return 'Bible Reader';
+  if (low.startsWith('conductor') || low.startsWith('kondyaktor')) return 'Conductor';
+  if (low.startsWith('speaker') || low.startsWith('tagapagsalita')) {
+    const num = low.match(/\d+/);
+    return num ? `Speaker ${num[0]}` : 'Speaker';
+  }
+  if (low.startsWith('student') || low.startsWith('estudyante')) {
+    const num = low.match(/\d+/);
+    return num ? `Student ${num[0]}` : 'Student';
+  }
+  if (low.startsWith('assistant') || low.startsWith('katulong')) {
+    const num = low.match(/\d+/);
+    return num ? `Assistant ${num[0]}` : 'Assistant';
+  }
+  return 'Speaker';
+}
 
-  // Strip CBS Reader if inline with CBS Conductor
-  if (section === 'living' && /pag-aaral|bible study|cbs/i.test(title)) {
+function extractRoleSegments(rawText) {
+  const clean = (rawText || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+
+  const matches = [];
+  let match;
+  const re = new RegExp(ROLE_ENTRY_RE.source, 'gi');
+  while ((match = re.exec(clean)) !== null) {
+    matches.push({
+      rawRole: match[1],
+      role: normalizeRoleLabel(match[1]),
+      startIndex: match.index,
+      valueStart: match.index + match[0].length,
+    });
+  }
+
+  // Detect CBS Reader / Watchtower Reader / Tagabasa / bare Reader inline so we can drop it cleanly
+  const readerRe = /\b(?:CBS\s*Reader|Watchtower\s*Reader|Tagabasa(?:\s+sa\s+Pag-aaral|\s+ng\s+Bantayan)?|Reader)\s*[:\-]\s*/gi;
+  const readerMatches = [];
+  let rMatch;
+  while ((rMatch = readerRe.exec(clean)) !== null) {
+    const prefixCheck = clean.slice(Math.max(0, rMatch.index - 7), rMatch.index).toLowerCase();
+    if (prefixCheck.includes('bible')) continue;
+    readerMatches.push({
+      role: '__DROP_READER__',
+      startIndex: rMatch.index,
+      valueStart: rMatch.index + rMatch[0].length,
+    });
+  }
+
+  const allMarkers = [...matches, ...readerMatches].sort((a, b) => a.startIndex - b.startIndex);
+  if (allMarkers.length === 0) return [];
+
+  const segments = [];
+  for (let i = 0; i < allMarkers.length; i++) {
+    const cur = allMarkers[i];
+    const next = allMarkers[i + 1];
+    const end = next ? next.startIndex : clean.length;
+    const val = clean
+      .slice(cur.valueStart, end)
+      .replace(/^[\s/|&-]+|[\s/|&-]+$/g, '')
+      .trim();
+    if (cur.role !== '__DROP_READER__' && val) {
+      const sanitized = sanitizeRoleValue(`${cur.role}: ${val}`);
+      if (sanitized) {
+        segments.push({ role: cur.role, full: sanitized, value: val });
+      }
+    }
+  }
+  return segments;
+}
+
+function parseRoleNames(rawNames, section, title) {
+  let clean = (rawNames || '').replace(/\s+/g, ' ').trim();
+  if (!clean || isDescriptionSubLine(clean)) return { speaker: '', assistant: '' };
+
+  const bibleReading = isBibleReading(title);
+  const isCbs = section === 'living' && /pag-aaral|bible study|cbs/i.test(title);
+
+  // Strip CBS Reader inline clauses
+  if (isCbs) {
     clean = clean
-      .replace(/\s*(?:\/|&|,|\||;)?\s*(?:cbs\s*)?(?:reader|tagabasa)\s*[:\-]\s*.+$/i, '')
+      .replace(/\s*(?:\/|&|,|\||;)?\s*(?:cbs\s*)?(?:reader|tagabasa)\s*[:\-].*$/i, '')
       .replace(/\s*\((?:reader|tagabasa)[^)]*\)/gi, '')
       .trim();
-    // If two names separated by / on CBS line, first is Conductor, second is Reader (excluded)
-    if (clean.includes('/')) {
-      clean = clean.split('/')[0].trim();
+  }
+
+  // Check explicit role-prefixed segments first
+  const segments = extractRoleSegments(clean);
+  if (segments.length > 0) {
+    let speaker = '';
+    let assistant = '';
+
+    for (const seg of segments) {
+      if (seg.role.startsWith('Assistant')) {
+        if (!bibleReading && !isCbs && section === 'ministry' && !assistant) {
+          assistant = seg.full;
+        }
+      } else if (!speaker) {
+        speaker = seg.full;
+      }
     }
-    return { speaker: clean, assistant: '' };
-  }
 
-  // Explicit (Asst: Name) or (Katulong: Name)
-  const explicitMatch = clean.match(/^(.+?)\s*\(?(?:asst|assistant|katulong)\s*[:\-]\s*([^)]+)\)?$/i);
-  if (explicitMatch) {
     return {
-      speaker: explicitMatch[1].trim(),
-      assistant: explicitMatch[2].trim(),
+      speaker: sanitizeRoleValue(speaker),
+      assistant: bibleReading || isCbs || section !== 'ministry' ? '' : sanitizeRoleValue(assistant),
     };
   }
 
-  // Delimiters: "Name 1 / Name 2", "Name 1 & Name 2", "Name 1 | Name 2"
-  const delimMatch = clean.match(/^(.+?)\s*(?:\/|&|\|)\s*(.+)$/);
-  if (delimMatch && section === 'ministry') {
-    return {
-      speaker: delimMatch[1].trim(),
-      assistant: delimMatch[2].trim(),
-    };
+  // Fallback when no explicit role labels appeared in right column
+  if (isCbs) {
+    const primary = clean.includes('/') ? clean.split('/')[0].trim() : clean;
+    return { speaker: sanitizeRoleValue(primary ? `CBS Conductor: ${primary}` : ''), assistant: '' };
   }
 
-  return { speaker: clean, assistant: '' };
+  if (bibleReading) {
+    const readerOnly = clean.includes('/') ? clean.split('/')[0].trim() : clean;
+    return { speaker: sanitizeRoleValue(readerOnly ? `Bible Reader: ${readerOnly}` : ''), assistant: '' };
+  }
+
+  if (section === 'opening' || section === 'concluding') {
+    return { speaker: sanitizeRoleValue(`Chairman: ${clean}`), assistant: '' };
+  }
+
+  if (section === 'ministry') {
+    const delim = clean.match(/^(.+?)\s*(?:\/|&|\|)\s*(.+)$/);
+    if (delim) {
+      return {
+        speaker: sanitizeRoleValue(`Student: ${delim[1].trim()}`),
+        assistant: sanitizeRoleValue(`Assistant: ${delim[2].trim()}`),
+      };
+    }
+    return { speaker: sanitizeRoleValue(`Student: ${clean}`), assistant: '' };
+  }
+
+  return { speaker: sanitizeRoleValue(`Speaker: ${clean}`), assistant: '' };
+}
+
+function mergeStackedRightText(existingSpeaker, existingAssistant, extraRightText, section, title) {
+  if (!extraRightText || isDescriptionSubLine(extraRightText)) {
+    return { speaker: existingSpeaker, assistant: existingAssistant };
+  }
+
+  const parsed = parseRoleNames(extraRightText, section, title);
+  const bibleReading = isBibleReading(title);
+  const isCbs = section === 'living' && /pag-aaral|bible study|cbs/i.test(title);
+
+  let speaker = existingSpeaker;
+  let assistant = bibleReading || isCbs || section !== 'ministry' ? '' : existingAssistant;
+
+  if (parsed.speaker && !speaker) {
+    speaker = parsed.speaker;
+  } else if (
+    parsed.speaker &&
+    speaker &&
+    !assistant &&
+    !bibleReading &&
+    !isCbs &&
+    section === 'ministry' &&
+    !/student\s*speaker/i.test(speaker)
+  ) {
+    // Second stacked line under a Ministry part without "Assistant:" keyword can be the assistant
+    const cleanVal = parsed.speaker.replace(/^(?:Student(?:\s*\d+)?|Speaker(?:\s*\d+)?)\s*:\s*/i, '').trim();
+    if (cleanVal) {
+      assistant = sanitizeRoleValue(`Assistant: ${cleanVal}`);
+    }
+  }
+
+  if (parsed.assistant && !assistant && !bibleReading && !isCbs && section === 'ministry') {
+    assistant = parsed.assistant;
+  }
+
+  return {
+    speaker: sanitizeRoleValue(speaker),
+    assistant: section === 'ministry' && !bibleReading ? sanitizeRoleValue(assistant) : '',
+  };
 }
 
 function extractMetadataFromText(fullText) {
@@ -95,18 +407,31 @@ function extractMetadataFromText(fullText) {
   const dateRegex =
     /\b(?:January|February|March|April|May|June|July|August|September|October|November|December|Enero|Pebrero|Marso|Abril|Mayo|Hunyo|Hulyo|Agosto|Setyembre|Oktubre|Nobyembre|Disyembre)\s+\d{1,2}(?:\s*[-–]\s*\d{1,2})?,?\s*\d{4}\b/i;
 
-  for (const line of lines.slice(0, 12)) {
+  for (const line of lines.slice(0, 16)) {
     if (!weekLabel) {
       const m = line.match(dateRegex);
       if (m) weekLabel = m[0].replace(/\s+/g, ' ').trim();
     }
     if (!chairman) {
-      const chMatch = line.match(/^(?:chairman|tagapangulo)\s*[:\-]\s*(.+)$/i);
-      if (chMatch) chairman = chMatch[1].trim();
+      const chMatch = line.match(/(?:chairman|tagapangulo)\s*[:\-]\s*(.+)$/i);
+      if (chMatch) {
+        const cleaned = sanitizeRoleValue(`Chairman: ${chMatch[1].trim()}`);
+        if (cleaned) chairman = cleaned;
+      }
     }
   }
 
   return { weekLabel, chairman };
+}
+
+function extractMinutesFromText(text) {
+  if (!text) return null;
+  const m = text.match(/\(?\s*(\d{1,2})\s*(?:min\.?|mins?\.?|minuto|mln\.?|rnin\.?)\s*\)?/i);
+  if (m) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= 60) return n;
+  }
+  return null;
 }
 
 /* =========================================================
@@ -141,7 +466,7 @@ function parseS140ThreeColumn(data) {
 
   const heights = words.map((w) => w.height).sort((a, b) => a - b);
   const medianH = heights[Math.floor(heights.length / 2)] || 16;
-  const yTolerance = Math.max(8, medianH * 0.7);
+  const yTolerance = Math.max(8, medianH * 0.72);
   const imageWidth = Math.max(...words.map((w) => w.x1), 1);
 
   // Cluster words into vertical Y-rows
@@ -159,7 +484,7 @@ function parseS140ThreeColumn(data) {
     }
   }
 
-  // Sort words inside each row left-to-right and locate duration column anchors
+  // Locate Middle Column (X min.) — handles italicized (4 min.) and split tokens
   const durationXs = [];
   rows.forEach((row) => {
     row.words.sort((a, b) => a.x0 - b.x0);
@@ -170,41 +495,46 @@ function parseS140ThreeColumn(data) {
       const next = row.words[i + 1];
       const combined = next ? `${curr.text} ${next.text}` : curr.text;
 
-      if (/^\(?\d{1,2}\)?$/.test(curr.text) && next && /^min\.?s?\.?$|^minuto$/i.test(next.text.replace(/[()]/g, ''))) {
+      if (
+        /^\(?\d{1,2}\)?$/.test(curr.text) &&
+        next &&
+        /^(?:min|mins|minuto|mln|rnin)\.?\)?$/i.test(next.text.replace(/[()]/g, ''))
+      ) {
         durationXs.push((curr.xCenter + next.xCenter) / 2);
-      } else if (/^\(?\d{1,2}\s*min\.?s?\.?\)?$/i.test(curr.text)) {
+      } else if (/^\(?\d{1,2}\s*(?:min|mins|minuto|mln|rnin)\.?\)?$/i.test(curr.text)) {
         durationXs.push(curr.xCenter);
-      } else if (/\(\d{1,2}\s*min/i.test(combined)) {
+      } else if (/\(?\d{1,2}\s*(?:min|mins|minuto|mln|rnin)/i.test(combined)) {
         durationXs.push(curr.xCenter);
       }
     }
   });
 
-  // Require at least 2 aligned duration tokens for 3-column mode
   if (durationXs.length < 2) return null;
 
   durationXs.sort((a, b) => a - b);
   const medianMidX = durationXs[Math.floor(durationXs.length / 2)];
-  const midLeftBound = Math.max(imageWidth * 0.28, medianMidX - imageWidth * 0.1);
-  const midRightBound = Math.min(imageWidth * 0.82, medianMidX + imageWidth * 0.11);
+  const midLeftBound = Math.max(imageWidth * 0.28, medianMidX - imageWidth * 0.12);
+  const midRightBound = Math.min(imageWidth * 0.82, medianMidX + imageWidth * 0.12);
 
   const parsedParts = [];
-  let activeSection = 'opening';
+  let bannerSection = null;
   let extractedChairman = '';
+  let lastPartSkipped = false;
 
   for (const row of rows) {
     const rowText = row.fullText.trim();
     if (!rowText) continue;
 
-    // Detect Chairman in metadata rows
     const chMatch = rowText.match(/(?:chairman|tagapangulo)\s*[:\-]\s*(.+)/i);
     if (chMatch && !extractedChairman) {
-      extractedChairman = chMatch[1].trim();
+      const cleanChair = sanitizeRoleValue(`Chairman: ${chMatch[1].trim()}`);
+      if (cleanChair) extractedChairman = cleanChair;
     }
 
     const secHeader = detectSectionHeader(rowText);
     if (secHeader) {
-      activeSection = secHeader;
+      bannerSection = secHeader;
+      lastPartSkipped = false;
       if (isPureSectionHeader(rowText)) continue;
     }
 
@@ -226,50 +556,86 @@ function parseS140ThreeColumn(data) {
     const midText = midWords.join(' ').trim();
     const rightText = rightWords.join(' ').trim();
 
-    // Extract minutes from Middle Column (or inline parenthesized "(X min.)" inside Left Column)
     let minutes = null;
-    const midMinMatch = midText.match(/(\d{1,2})\s*(?:min\.?|mins?\.?|minuto)?/i);
-    const leftMinMatch = leftText.match(/\((\d{1,2})\s*(?:min\.?|mins?\.?|minuto)\)/i);
-
-    if (midMinMatch && /\d/.test(midText)) {
-      minutes = Number(midMinMatch[1]);
-    } else if (leftMinMatch) {
-      minutes = Number(leftMinMatch[1]);
+    const midDigitMatch = midText.match(/(\d{1,2})\s*(?:min|mins|minuto|mln|rnin)?/i);
+    if (midDigitMatch && /\d/.test(midText)) {
+      minutes = Number(midDigitMatch[1]);
+    } else {
+      minutes = extractMinutesFromText(leftText) || extractMinutesFromText(`${leftText} ${midText}`);
     }
 
-    // Handle assistant continuation row directly below a Ministry part
-    if (!minutes && !leftText && rightText && parsedParts.length > 0) {
-      const prev = parsedParts[parsedParts.length - 1];
-      if (prev.section === 'ministry' && !prev.assistant && !isSkippedRow(rightText)) {
-        const cleanedAsst = rightText.replace(/^(?:asst|assistant|katulong)\s*[:\-]\s*/i, '').trim();
-        if (cleanedAsst) {
-          prev.assistant = cleanedAsst;
-          prev.isTalk = false;
-        }
+    // Handle rows without minutes (stacked role lines OR unnumbered sub-descriptions)
+    if (!minutes || minutes < 1 || minutes > 60) {
+      if (lastPartSkipped) continue;
+
+      const candidateNameText =
+        rightText || (new RegExp(ROLE_ENTRY_RE.source, 'i').test(rowText) ? rowText : '');
+
+      if (
+        candidateNameText &&
+        parsedParts.length > 0 &&
+        !isSkippedRow(candidateNameText) &&
+        !isDescriptionSubLine(candidateNameText)
+      ) {
+        const prev = parsedParts[parsedParts.length - 1];
+        const merged = mergeStackedRightText(
+          prev.speaker,
+          prev.assistant,
+          candidateNameText,
+          prev.section,
+          prev.title
+        );
+        prev.speaker = merged.speaker;
+        prev.assistant = merged.assistant;
+        prev.isTalk = isBibleReading(prev.title) ? true : prev.section !== 'ministry' && !prev.assistant;
       }
       continue;
     }
 
-    if (!minutes || minutes < 1 || minutes > 60) continue;
+    // Check if row contains Opening/Concluding Comments mixed with Song & Prayer
+    const commentMeta =
+      extractCommentFromMixedRow(leftText) ||
+      extractCommentFromMixedRow(`${leftText} ${midText}`) ||
+      extractCommentFromMixedRow(rowText);
+
+    if (commentMeta) {
+      lastPartSkipped = false;
+      const { speaker } = parseRoleNames(rightText, commentMeta.section, commentMeta.title);
+      parsedParts.push(
+        normalizePart({
+          id: generateId('part'),
+          title: commentMeta.title,
+          section: commentMeta.section,
+          speaker: speaker || extractedChairman,
+          assistant: '',
+          isTalk: true,
+          plannedMinutes: minutes,
+        })
+      );
+      continue;
+    }
 
     const title = cleanPartTitle(leftText);
-    if (!title || isSkippedRow(title)) continue;
+    if (!title || title.length < 2 || isSkippedRow(title)) {
+      lastPartSkipped = true;
+      continue;
+    }
 
-    let partSection = activeSection;
-    if (/pambungad|opening/i.test(title)) partSection = 'opening';
-    else if (/pangwakas|concluding|closing/i.test(title)) partSection = 'concluding';
-    else if (activeSection === 'opening') partSection = inferSectionFromTitle(title);
+    lastPartSkipped = false;
 
-    const { speaker, assistant } = splitSpeakerAndAssistant(rightText, partSection, title);
+    // Strictly respect detected section banner (never override banner with keyword guessing)
+    const partSection = bannerSection || inferSectionFromTitle(title);
+
+    const { speaker, assistant } = parseRoleNames(rightText, partSection, title);
 
     parsedParts.push(
       normalizePart({
         id: generateId('part'),
         title,
         section: partSection,
-        speaker: speaker || ((partSection === 'opening' || partSection === 'concluding') ? extractedChairman : ''),
+        speaker,
         assistant,
-        isTalk: partSection !== 'ministry' && !assistant,
+        isTalk: isBibleReading(title) ? true : partSection !== 'ministry' && !assistant,
         plannedMinutes: minutes,
       })
     );
@@ -279,7 +645,7 @@ function parseS140ThreeColumn(data) {
 }
 
 /* =========================================================
-   PLAN B ADAPTIVE REGEX PARSER
+   PLAN B ADAPTIVE REGEX PARSER (SUPPORTS STACKED ROLE LINES)
    ========================================================= */
 function parsePlanBRegex(fullText) {
   const lines = (fullText || '')
@@ -288,65 +654,93 @@ function parsePlanBRegex(fullText) {
     .filter(Boolean);
 
   const parts = [];
-  let activeSection = 'opening';
+  let bannerSection = null;
   let extractedChairman = '';
+  let lastPartSkipped = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    const chMatch = line.match(/(?:chairman|tagapangulo)\s*[:\-]\s*(.+)/i);
+    const chMatch = line.match(/^(?:chairman|tagapangulo)\s*[:\-]\s*(.+)$/i);
     if (chMatch && !extractedChairman) {
-      extractedChairman = chMatch[1].trim();
+      const cleanChair = sanitizeRoleValue(`Chairman: ${chMatch[1].trim()}`);
+      if (cleanChair) extractedChairman = cleanChair;
       continue;
     }
 
     const secHeader = detectSectionHeader(line);
     if (secHeader) {
-      activeSection = secHeader;
+      bannerSection = secHeader;
+      lastPartSkipped = false;
       if (isPureSectionHeader(line)) continue;
     }
 
-    // Match "... (X min.) Speaker Name" or "... X min. Speaker Name"
-    const m = line.match(/^(.+?)\s+\(?(\d{1,2})\s*(?:min\.?|mins?\.?|minuto)\)?(?:\s+(.+))?$/i);
-    if (!m) continue;
+    const m = line.match(
+      /^(.+?)\s+\(?(\d{1,2})\s*(?:min\.?|mins?\.?|minuto|mln\.?|rnin\.?)\)?(?:\s+(.+))?$/i
+    );
+    if (m) {
+      const rawLeft = m[1].trim();
+      const minutes = Number(m[2]);
+      const rightNames = (m[3] || '').trim();
 
-    const title = cleanPartTitle(m[1]);
-    const minutes = Number(m[2]);
-    let rightNames = (m[3] || '').trim();
-
-    if (!title || isSkippedRow(title) || minutes < 1 || minutes > 60) continue;
-
-    let partSection = activeSection;
-    if (/pambungad|opening/i.test(title)) partSection = 'opening';
-    else if (/pangwakas|concluding|closing/i.test(title)) partSection = 'concluding';
-    else if (activeSection === 'opening') partSection = inferSectionFromTitle(title);
-
-    // Check next line for an assistant name if Ministry part
-    let assistantFromNext = '';
-    if (partSection === 'ministry' && lines[i + 1]) {
-      const nextLine = lines[i + 1];
-      if (!/\d{1,2}\s*min/i.test(nextLine) && !detectSectionHeader(nextLine) && !isSkippedRow(nextLine)) {
-        const asstMatch = nextLine.match(/^(?:asst|assistant|katulong)\s*[:\-]\s*(.+)$/i);
-        if (asstMatch) {
-          assistantFromNext = asstMatch[1].trim();
-          i++;
-        }
+      if (minutes < 1 || minutes > 60) {
+        lastPartSkipped = true;
+        continue;
       }
+
+      const commentMeta = extractCommentFromMixedRow(rawLeft) || extractCommentFromMixedRow(line);
+      if (commentMeta) {
+        lastPartSkipped = false;
+        const { speaker } = parseRoleNames(rightNames, commentMeta.section, commentMeta.title);
+        parts.push(
+          normalizePart({
+            id: generateId('part'),
+            title: commentMeta.title,
+            section: commentMeta.section,
+            speaker: speaker || extractedChairman,
+            assistant: '',
+            isTalk: true,
+            plannedMinutes: minutes,
+          })
+        );
+        continue;
+      }
+
+      const title = cleanPartTitle(rawLeft);
+      if (!title || title.length < 2 || isSkippedRow(title)) {
+        lastPartSkipped = true;
+        continue;
+      }
+
+      lastPartSkipped = false;
+      const partSection = bannerSection || inferSectionFromTitle(title);
+      const { speaker, assistant } = parseRoleNames(rightNames, partSection, title);
+
+      parts.push(
+        normalizePart({
+          id: generateId('part'),
+          title,
+          section: partSection,
+          speaker,
+          assistant,
+          isTalk: isBibleReading(title) ? true : partSection !== 'ministry' && !assistant,
+          plannedMinutes: minutes,
+        })
+      );
+      continue;
     }
 
-    const { speaker, assistant } = splitSpeakerAndAssistant(rightNames, partSection, title);
-
-    parts.push(
-      normalizePart({
-        id: generateId('part'),
-        title,
-        section: partSection,
-        speaker: speaker || ((partSection === 'opening' || partSection === 'concluding') ? extractedChairman : ''),
-        assistant: assistant || assistantFromNext,
-        isTalk: partSection !== 'ministry' && !(assistant || assistantFromNext),
-        plannedMinutes: minutes,
-      })
-    );
+    // Stacked role/name lines underneath the previous part (skip sub-descriptions)
+    if (!lastPartSkipped && parts.length > 0 && !isSkippedRow(line) && !isDescriptionSubLine(line)) {
+      const prev = parts[parts.length - 1];
+      const hasRole = new RegExp(ROLE_ENTRY_RE.source, 'i').test(line);
+      if (hasRole) {
+        const merged = mergeStackedRightText(prev.speaker, prev.assistant, line, prev.section, prev.title);
+        prev.speaker = merged.speaker;
+        prev.assistant = merged.assistant;
+        prev.isTalk = isBibleReading(prev.title) ? true : prev.section !== 'ministry' && !prev.assistant;
+      }
+    }
   }
 
   return { parts, chairman: extractedChairman };
@@ -358,6 +752,11 @@ function parsePlanBRegex(fullText) {
 export async function scanScheduleImageOffline(imageFile, onProgress) {
   let worker = null;
   try {
+    if (typeof onProgress === 'function') {
+      onProgress({ status: 'Enhancing image...', progress: 8 });
+    }
+    const processedInput = await preprocessImageForOcr(imageFile);
+
     worker = await createWorker(['eng', 'tgl'], 1, {
       workerPath: './tesseract/worker.min.js',
       corePath: './tesseract',
@@ -368,36 +767,33 @@ export async function scanScheduleImageOffline(imageFile, onProgress) {
         if (typeof onProgress === 'function') {
           onProgress({
             status: msg.status || 'Processing',
-            progress: Math.round((msg.progress || 0) * 100),
+            progress: Math.max(10, Math.round((msg.progress || 0) * 100)),
           });
         }
       },
     });
 
-    const result = await worker.recognize(imageFile, {}, { blocks: true, text: true });
+    const result = await worker.recognize(processedInput, {}, { blocks: true, text: true });
     const data = result?.data || {};
     const fullText = data.text || '';
-
     const meta = extractMetadataFromText(fullText);
 
-    // Primary S-140 / KHS 3-Column Y-Row Parser
     const primary = parseS140ThreeColumn(data);
     if (primary && primary.parts.length >= 3) {
       return {
         modeUsed: '3-column',
         weekLabel: meta.weekLabel || 'December 4, 2026',
-        chairman: primary.chairman || meta.chairman || '',
+        chairman: (primary.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, ''),
         parts: primary.parts,
         rawText: fullText,
       };
     }
 
-    // Plan B Adaptive Mode
     const planB = parsePlanBRegex(fullText);
     return {
       modeUsed: 'plan-b',
       weekLabel: meta.weekLabel || 'December 4, 2026',
-      chairman: planB.chairman || meta.chairman || '',
+      chairman: (planB.chairman || meta.chairman || '').replace(/^Chairman:\s*/i, ''),
       parts: planB.parts,
       rawText: fullText,
     };
@@ -413,7 +809,7 @@ export async function scanScheduleImageOffline(imageFile, onProgress) {
 }
 
 /* =========================================================
-   PRESERVED TEXT AUTO-FILL PARSER (FROM ORIGINAL APP)
+   PRESERVED TEXT AUTO-FILL PARSER (ROLE-PREFIXED)
    ========================================================= */
 export function parseMeetingScheduleText(rawText, lang = 'tl') {
   if (!rawText || !rawText.trim()) return null;
@@ -477,12 +873,15 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
     }
 
     if (currentSection === 'meta' || currentSection === 'treasures') {
-      if (/^(SPEAKER:|TAGAPAGSALITA:|PAHAYAG:)/i.test(line)) {
-        result.treasures.speaker = line.replace(/^(SPEAKER:|TAGAPAGSALITA:|PAHAYAG:)/i, '').trim();
+      if (/^(SPEAKER(?:\s*\d+)?:|TAGAPAGSALITA(?:\s*\d+)?:|PAHAYAG:)/i.test(line)) {
+        const val = line.replace(/^(SPEAKER(?:\s*\d+)?:|TAGAPAGSALITA(?:\s*\d+)?:|PAHAYAG:)/i, '').trim();
+        if (val) result.treasures.speaker = sanitizeRoleValue(`Speaker: ${val}`);
       } else if (/^(GEMS CONDUCTOR:|GEMS:|ESPIRITUWAL NA HIYAS:)/i.test(line)) {
-        result.treasures.gemsConductor = line.replace(/^(GEMS CONDUCTOR:|GEMS:|ESPIRITUWAL NA HIYAS:)/i, '').trim();
+        const val = line.replace(/^(GEMS CONDUCTOR:|GEMS:|ESPIRITUWAL NA HIYAS:)/i, '').trim();
+        if (val) result.treasures.gemsConductor = sanitizeRoleValue(`Gems Conductor: ${val}`);
       } else if (/^(BIBLE READER:|READER:|PAGBABASA SA BIBLIYA:)/i.test(line)) {
-        result.treasures.bibleReader = line.replace(/^(BIBLE READER:|READER:|PAGBABASA SA BIBLIYA:)/i, '').trim();
+        const val = line.replace(/^(BIBLE READER:|READER:|PAGBABASA SA BIBLIYA:)/i, '').trim();
+        if (val) result.treasures.bibleReader = sanitizeRoleValue(`Bible Reader: ${val}`);
       }
     } else if (currentSection === 'ministry') {
       if (/^(PART|BAHAGI|ITEM)/i.test(line)) {
@@ -494,40 +893,58 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
           isTalk: false,
         };
         result.ministryParts.push(currentMinistryPart);
-      } else if (/^(STUDENT:|ESTUDYANTE:)/i.test(line)) {
-        const studentName = line.replace(/^(STUDENT:|ESTUDYANTE:)/i, '').trim();
-        if (!currentMinistryPart) {
-          currentMinistryPart = { title: 'Ministry Part', student: studentName, assistant: '', isTalk: false };
-          result.ministryParts.push(currentMinistryPart);
-        } else {
-          currentMinistryPart.student = studentName;
+      } else if (/^(STUDENT\s*SPEAKER:)/i.test(line)) {
+        const val = line.replace(/^STUDENT\s*SPEAKER:/i, '').trim();
+        if (currentMinistryPart && val) {
+          currentMinistryPart.student = sanitizeRoleValue(`Student Speaker: ${val}`);
+          currentMinistryPart.isTalk = true;
         }
-      } else if (/^(ASSISTANT:|KATULONG:)/i.test(line)) {
-        if (currentMinistryPart) {
-          currentMinistryPart.assistant = line.replace(/^(ASSISTANT:|KATULONG:)/i, '').trim();
+      } else if (/^(STUDENT(?:\s*\d+)?|ESTUDYANTE(?:\s*\d+)?):/i.test(line)) {
+        const num = line.match(/\d+/);
+        const val = line.replace(/^(STUDENT(?:\s*\d+)?|ESTUDYANTE(?:\s*\d+)?):/i, '').trim();
+        const roleLabel = num ? `Student ${num[0]}` : `Student ${result.ministryParts.length || 1}`;
+        if (!currentMinistryPart) {
+          currentMinistryPart = {
+            title: 'Ministry Part',
+            student: val ? sanitizeRoleValue(`${roleLabel}: ${val}`) : '',
+            assistant: '',
+            isTalk: false,
+          };
+          result.ministryParts.push(currentMinistryPart);
+        } else if (val) {
+          currentMinistryPart.student = sanitizeRoleValue(`${roleLabel}: ${val}`);
+        }
+      } else if (/^(ASSISTANT(?:\s*\d+)?|KATULONG(?:\s*\d+)?):/i.test(line)) {
+        const num = line.match(/\d+/);
+        const val = line.replace(/^(ASSISTANT(?:\s*\d+)?|KATULONG(?:\s*\d+)?):/i, '').trim();
+        const roleLabel = num ? `Assistant ${num[0]}` : `Assistant ${result.ministryParts.length || 1}`;
+        if (currentMinistryPart && val) {
+          currentMinistryPart.assistant = sanitizeRoleValue(`${roleLabel}: ${val}`);
         }
       } else if (/^(SPEAKER:|TAGAPAGSALITA:)/i.test(line)) {
-        if (currentMinistryPart) {
-          currentMinistryPart.student = line.replace(/^(SPEAKER:|TAGAPAGSALITA:)/i, '').trim();
+        const val = line.replace(/^(SPEAKER:|TAGAPAGSALITA:)/i, '').trim();
+        if (currentMinistryPart && val) {
+          currentMinistryPart.student = sanitizeRoleValue(`Student Speaker: ${val}`);
           currentMinistryPart.isTalk = true;
         }
       }
     } else if (currentSection === 'living') {
-      if (/^(LOKAL NA PANGANGAILANGAN:|LOCAL NEEDS:)/i.test(line)) {
-        result.living.localNeedsSpeaker = line.replace(/^(LOKAL NA PANGANGAILANGAN:|LOCAL NEEDS:)/i, '').trim();
-      } else if (/^(BIBLE STUDY:|PAG-AARAL SA BIBLIYA:|CBS CONDUCTOR:|CONDUCTOR:|KONDYAKTOR:)/i.test(line)) {
-        result.living.cbsConductor = line
-          .replace(/^(BIBLE STUDY:|PAG-AARAL SA BIBLIYA:|CBS CONDUCTOR:|CONDUCTOR:|KONDYAKTOR:)/i, '')
+      if (/^(LOKAL NA PANGANGAILANGAN:|LOCAL NEEDS:|LN\s*SPEAKER:)/i.test(line)) {
+        const val = line.replace(/^(LOKAL NA PANGANGAILANGAN:|LOCAL NEEDS:|LN\s*SPEAKER:)/i, '').trim();
+        if (val) result.living.localNeedsSpeaker = sanitizeRoleValue(`LN Speaker: ${val}`);
+      } else if (/^(BIBLE STUDY:|PAG-AARAL SA BIBLIYA:|CBS\s*CONDUCTOR:|CONDUCTOR:|KONDYAKTOR:)/i.test(line)) {
+        const val = line
+          .replace(/^(BIBLE STUDY:|PAG-AARAL SA BIBLIYA:|CBS\s*CONDUCTOR:|CONDUCTOR:|KONDYAKTOR:)/i, '')
           .trim();
+        if (val) result.living.cbsConductor = sanitizeRoleValue(`CBS Conductor: ${val}`);
       }
-      // Explicitly ignore CBS Reader / Tagabasa sa Pag-aaral per filtering rules
     }
   }
 
   const baseParts = createDefaultMidweekParts(lang);
-  const chair = result.chairman;
-  const openSpk = result.openingSpeaker || chair;
-  const closeSpk = result.concludingSpeaker || chair;
+  const chair = sanitizeRoleValue(result.chairman).replace(/^Chairman:\s*/i, '');
+  const openSpk = sanitizeRoleValue(result.openingSpeaker ? `Chairman: ${result.openingSpeaker}` : chair ? `Chairman: ${chair}` : '');
+  const closeSpk = sanitizeRoleValue(result.concludingSpeaker ? `Chairman: ${result.concludingSpeaker}` : chair ? `Chairman: ${chair}` : '');
 
   const beforeMinistry = baseParts.filter((p) => p.section === 'opening' || p.section === 'treasures');
   const afterMinistry = baseParts.filter((p) => p.section === 'living' || p.section === 'concluding');
@@ -563,6 +980,7 @@ export function parseMeetingScheduleText(rawText, lang = 'tl') {
   });
 
   return {
+    meetingType: 'midweek',
     weekLabel: result.date || 'December 4, 2026',
     congregationName: result.congregation || 'Kingdom Hall',
     chairman: chair,
