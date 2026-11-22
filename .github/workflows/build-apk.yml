@@ -26,6 +26,9 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v4
+
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
@@ -38,7 +41,7 @@ jobs:
             npx cap add android
           fi
 
-      - name: Copy native Kotlin Overlay files, launcher icons & AndroidManifest.xml
+      - name: Copy native Kotlin Overlay files, launcher icons & clean splash screen
         run: |
           mkdir -p android/app/src/main/java/com/midweek/meetingtimer
           cp android-template/MainActivity.kt android/app/src/main/java/com/midweek/meetingtimer/MainActivity.kt
@@ -46,8 +49,12 @@ jobs:
           cp android-template/OverlayService.kt android/app/src/main/java/com/midweek/meetingtimer/OverlayService.kt
           cp android-template/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
           if [ -d "android-template/res" ]; then
+            rm -rf android/app/src/main/res/mipmap-*
             cp -r android-template/res/* android/app/src/main/res/
           fi
+          rm -f android/app/src/main/res/drawable*/splash.png
+          mkdir -p android/app/src/main/res/drawable
+          printf '<?xml version="1.0" encoding="utf-8"?>\n<shape xmlns:android="http://android.com" android:shape="rectangle">\n    <solid android:color="#080f1f" />\n</shape>\n' > android/app/src/main/res/drawable/splash.xml
           rm -f android/app/src/main/java/com/midweek/meetingtimer/MainActivity.java
 
       - name: Enable Kotlin & Native Offline ML Kit OCR in Android Gradle
