@@ -41,29 +41,11 @@ jobs:
             npx cap add android
           fi
 
-      - name: Copy native Kotlin Overlay files, launcher icons & clean splash screen
-        run: |
-          mkdir -p android/app/src/main/java/com/midweek/meetingtimer
-          cp android-template/MainActivity.kt android/app/src/main/java/com/midweek/meetingtimer/MainActivity.kt
-          cp android-template/OverlayPlugin.kt android/app/src/main/java/com/midweek/meetingtimer/OverlayPlugin.kt
-          cp android-template/OverlayService.kt android/app/src/main/java/com/midweek/meetingtimer/OverlayService.kt
-          cp android-template/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
-          if [ -d "android-template/res" ]; then
-            rm -rf android/app/src/main/res/mipmap-*
-            cp -r android-template/res/* android/app/src/main/res/
-            rm -rf android/app/src/main/res/mipmap-anydpi-v26
-          fi
-          rm -f android/app/src/main/res/drawable*/splash.png
-          mkdir -p android/app/src/main/res/drawable
-          printf '<?xml version="1.0" encoding="utf-8"?>\n<shape xmlns:android="http://android.com" android:shape="rectangle">\n    <solid android:color="#080f1f" />\n</shape>\n' > android/app/src/main/res/drawable/splash.xml
-          rm -f android/app/src/main/java/com/midweek/meetingtimer/MainActivity.java
-
       - name: Enable Kotlin & Native Offline ML Kit OCR in Android Gradle
         run: |
           node -e '
             const fs = require("fs");
 
-            // 1. Add kotlin-gradle-plugin to android/build.gradle
             let rootGradle = fs.readFileSync("android/build.gradle", "utf8");
             if (!rootGradle.includes("kotlin-gradle-plugin")) {
               rootGradle = rootGradle.replace(
@@ -73,7 +55,6 @@ jobs:
               fs.writeFileSync("android/build.gradle", rootGradle);
             }
 
-            // 2. Apply kotlin-android plugin, JVM 21 target, and bundled offline ML Kit Text Recognition in android/app/build.gradle
             let appGradle = fs.readFileSync("android/app/build.gradle", "utf8");
             if (!appGradle.includes("kotlin-android")) {
               if (appGradle.includes("apply plugin: '\''com.android.application'\''")) {
@@ -99,6 +80,26 @@ jobs:
 
       - name: Sync Capacitor Android project
         run: npx cap sync android
+
+      - name: Copy native Kotlin Overlay files, launcher icons & clean splash screen
+        run: |
+          mkdir -p android/app/src/main/java/com/midweek/meetingtimer
+          cp android-template/MainActivity.kt android/app/src/main/java/com/midweek/meetingtimer/MainActivity.kt
+          cp android-template/OverlayPlugin.kt android/app/src/main/java/com/midweek/meetingtimer/OverlayPlugin.kt
+          cp android-template/OverlayService.kt android/app/src/main/java/com/midweek/meetingtimer/OverlayService.kt
+          cp android-template/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          rm -rf android/app/src/main/res/mipmap-*
+          cp -r android-template/res/* android/app/src/main/res/
+          rm -rf android/app/src/main/res/mipmap-anydpi*
+          for d in android/app/src/main/res/mipmap-*; do
+            if [ -f "$d/ic_launcher.png" ]; then
+              cp "$d/ic_launcher.png" "$d/ic_launcher_round.png"
+            fi
+          done
+          rm -f android/app/src/main/res/drawable*/splash.png
+          mkdir -p android/app/src/main/res/drawable
+          echo "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPHNoYXBlIHhtbG5zOmFuZHJvaWQ9Imh0dHA6Ly9zY2hlbWFzLmFuZHJvaWQuY29tL2Fway9yZXMvYW5kcm9pZCIgYW5kcm9pZDpzaGFwZT0icmVjdGFuZ2xlIj4KICAgIDxzb2xpZCBhbmRyb2lkOmNvbG9yPSIjMDgwZjFmIiAvPgo8L3NoYXBlPg==" | base64 -d > android/app/src/main/res/drawable/splash.xml
+          rm -f android/app/src/main/java/com/midweek/meetingtimer/MainActivity.java
 
       - name: Build Debug APK with Gradle
         run: |
